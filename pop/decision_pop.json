@@ -12,7 +12,7 @@
   "prompt_constraints_digest": [
     "Exactly one branch: branch=answer vs branch=tool.",
     "Never pass art: handles as url/path (see prompt + Action guard).",
-    "tool_arguments dict passed verbatim to MCP after validation.",
+    "tool_arguments_json string (JSON object serialized as a string) passed through json.loads then sent to MCP.",
     "No regex on LLM output — JSON validated by Pydantic."
   ]
 }

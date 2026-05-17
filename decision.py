@@ -106,8 +106,8 @@ RULES:
 4. Prefer ``fetch_urls`` with every URL you already discovered when multiple pages must be read.
 5. For Indian price-shopping queries, prefer Amazon.in / Flipkart; otherwise follow the goal neutrally.
 
-When calling a tool, respond with JSON: {{"branch":"tool","tool_name":"<name>","tool_arguments":{{...}}}} .
-When answering with plain text, respond with JSON: {{"branch":"answer","answer_text":"..."}} .
+When calling a tool, respond with JSON: {{"branch":"tool","tool_name":"<name>","tool_arguments_json":"{{\\"query\\":\\"...\\"}}"}} (tool_arguments_json must be a **string** containing one JSON object).
+When answering with plain text, respond with JSON: {{"branch":"answer","answer_text":"..."}} ; use ``"tool_arguments_json":"{{}}"`` when branch is answer.
 """
 
         client = shared_gemini_client()
@@ -137,7 +137,13 @@ When answering with plain text, respond with JSON: {{"branch":"answer","answer_t
                     data = json.loads(raw)
                     flat = DecisionLLMFlat.model_validate(data)
                     if flat.branch == "tool" and flat.tool_name:
-                        tc = ToolCall(name=flat.tool_name.strip(), arguments=dict(flat.tool_arguments or {}))
+                        raw_args = (flat.tool_arguments_json or "").strip() or "{}"
+                        try:
+                            obj = json.loads(raw_args)
+                            args: dict[str, Any] = obj if isinstance(obj, dict) else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                        tc = ToolCall(name=flat.tool_name.strip(), arguments=args)
                         return DecisionOutput(answer=None, tool_call=tc)
                     return DecisionOutput(answer=(flat.answer_text or "").strip() or "(empty answer)", tool_call=None)
                 except (json.JSONDecodeError, ValidationError, Exception) as e:

@@ -647,7 +647,10 @@
     }
 
     function stripAnsi(s) {
-        return String(s).replace(/\x1b\[[0-9;]*m/g, '');
+        return String(s)
+            .replace(/\x1b\[[\d;]*m/g, '')
+            .replace(/\x1b\][\s\S]*?\x07/g, '')
+            .replace(/\x1b\][\s\S]*?\x1b\\/g, '');
     }
 
     function escapeHtmlPlain(s) {
@@ -688,13 +691,20 @@
         }
     }
 
-    function consumeUiResultLine(rawPart) {
-        const plain = stripAnsi(rawPart).trim();
-        const prefix = '[UI_RESULT_JSON]';
-        if (!plain.startsWith(prefix)) return false;
-        const jsonStr = plain.slice(prefix.length).trim();
+    /**
+     * Extract UI_RESULT_JSON from one SSE record. Log lines are prefixed with
+     * ``time | LEVEL | message``, so we search for the marker (see stripAnsi).
+     */
+    function consumeUiResultPayload(payload) {
+        const plain = stripAnsi(payload);
+        const marker = '[UI_RESULT_JSON]';
+        const idx = plain.indexOf(marker);
+        if (idx < 0) return false;
+        let rest = plain.slice(idx + marker.length).trim();
+        const nl = rest.indexOf('\n');
+        if (nl >= 0) rest = rest.slice(0, nl).trim();
         try {
-            const data = JSON.parse(jsonStr);
+            const data = JSON.parse(rest);
             if (data && typeof data.text === 'string') {
                 showResultMarkdown(data.text);
                 resetRunButton();
@@ -766,12 +776,10 @@
 
         evtSource.onmessage = function (event) {
             const payload = event.data || '';
-            payload.split('\n').forEach(function (part) {
-                if (!part.length) return;
-                if (consumeUiResultLine(part)) return;
-                appendLog(part);
-                maybeComplete(part);
-            });
+            if (!payload) return;
+            if (consumeUiResultPayload(payload)) return;
+            appendLog(payload);
+            maybeComplete(payload);
         };
 
         evtSource.onerror = function () {

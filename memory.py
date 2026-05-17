@@ -42,6 +42,18 @@ def _tokens(text: str) -> set[str]:
     return {t for t in re.split(r"\W+", text.lower()) if t and t not in _STOPWORDS and len(t) > 1}
 
 
+def _memory_value_dict_from_json_blob(raw: str) -> dict[str, Any]:
+    """Parse ``MemoryClassifyLLM.value_json`` into ``MemoryItem.value`` (Developer API cannot use map schemas)."""
+    s = (raw or "").strip() or "{}"
+    try:
+        obj = json.loads(s)
+        if isinstance(obj, dict):
+            return obj
+        return {"value": obj}
+    except json.JSONDecodeError:
+        return {"text": s}
+
+
 class MemoryService:
     def __init__(self) -> None:
         try:
@@ -195,7 +207,7 @@ class MemoryService:
             kind=classified.kind,
             keywords=classified.keywords,
             descriptor=classified.descriptor or text[:240],
-            value=classified.value,
+            value=_memory_value_dict_from_json_blob(classified.value_json),
             artifact_id=None,
             source=source,
             run_id=run_id,
@@ -219,7 +231,7 @@ Return JSON matching the schema with:
 - kind: one of fact | preference | tool_outcome | scratchpad (use "fact" for birthdays and stated truths).
 - keywords: short lowercase tokens useful for keyword recall.
 - descriptor: ONE short human-readable line.
-- value: structured dict with canonical fields when obvious (e.g. entity, attribute, date).
+- value_json: ONE JSON **object** serialized as a string with canonical fields when obvious (e.g. {{"entity":"…","date":"…"}}).
 
 Content:
 {text}
@@ -229,7 +241,7 @@ Content:
                 kind="fact",
                 keywords=[w for w in _tokens(text)][:12],
                 descriptor=text[:200],
-                value={"text": text},
+                value_json=json.dumps({"text": text}, ensure_ascii=False),
                 confidence=0.5,
             )
 
@@ -262,7 +274,7 @@ Content:
             kind="fact",
             keywords=[w for w in _tokens(text)][:12],
             descriptor=text[:200],
-            value={"text": text},
+            value_json=json.dumps({"text": text}, ensure_ascii=False),
             confidence=0.5,
         )
 

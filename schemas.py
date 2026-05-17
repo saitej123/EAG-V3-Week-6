@@ -8,9 +8,10 @@ Legacy commerce catalog types (SQLite) remain for Indian PDP caching.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
 
 # --- Session 6 memory ---------------------------------------------------------
 
@@ -96,12 +97,37 @@ class DecisionOutput(BaseModel):
 
 
 class DecisionLLMFlat(BaseModel):
-    """Flat JSON schema for Gemini (avoids some nested ``response_schema`` quirks)."""
+    """Flat JSON for Gemini Developer API.
+
+    Open-ended maps are **JSON strings**, not ``dict`` fields — Pydantic's ``dict`` schemas
+    emit ``additionalProperties``, which the Developer API rejects (Enterprise-only).
+    """
+
+    model_config = ConfigDict(extra="ignore")
 
     branch: Literal["answer", "tool"]
     answer_text: str | None = None
     tool_name: str | None = None
-    tool_arguments: dict[str, JsonValue] = Field(default_factory=dict)
+    tool_arguments_json: str = Field(
+        default="{}",
+        description='Tool arguments as one JSON object serialized to a string. Use "{}" for branch answer.',
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_tool_arguments(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "tool_arguments_json" not in data and "tool_arguments" in data:
+            ta = data.get("tool_arguments")
+            if isinstance(ta, dict):
+                try:
+                    data["tool_arguments_json"] = json.dumps(ta, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    data["tool_arguments_json"] = "{}"
+            elif isinstance(ta, str):
+                data["tool_arguments_json"] = ta
+        return data
 
 
 # --- LLM-facing perception draft (no goal ids; loop merges stable ids) -------
@@ -123,11 +149,32 @@ class PerceptionLLMResponse(BaseModel):
 
 
 class MemoryClassifyLLM(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     kind: MemoryKind
     keywords: list[str] = Field(default_factory=list)
     descriptor: str = ""
-    value: dict[str, Any] = Field(default_factory=dict)
+    value_json: str = Field(
+        default="{}",
+        description='Structured payload as one JSON object serialized to a string (e.g. {"text":"..."}).',
+    )
     confidence: float = 0.85
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_legacy_value(cls, data: Any) -> Any:
+        if not isinstance(data, dict):
+            return data
+        if "value_json" not in data and "value" in data:
+            v = data.get("value")
+            if isinstance(v, dict):
+                try:
+                    data["value_json"] = json.dumps(v, ensure_ascii=False)
+                except (TypeError, ValueError):
+                    data["value_json"] = "{}"
+            elif isinstance(v, str):
+                data["value_json"] = v
+        return data
 
 
 # --- Partial summary (max iterations) ----------------------------------------

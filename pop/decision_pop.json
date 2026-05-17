@@ -1,0 +1,18 @@
+{
+  "module": "decision",
+  "output_model": "DecisionLLMFlat",
+  "mapped_runtime_model": "DecisionOutput { answer?, tool_call? }",
+  "llm_contract": {
+    "sdk": "google-genai",
+    "response_mime_type": "application/json",
+    "response_schema_pydantic": "DecisionLLMFlat",
+    "temperature": 0.2
+  },
+  "next_step_signature": "next_step(goal, hits: list[MemoryItem], attached: list[tuple[str,bytes]], history: list[dict], user_query: str, db_rows: list[CachedProductRow]) -> DecisionOutput",
+  "prompt_constraints_digest": [
+    "Exactly one branch: branch=answer vs branch=tool.",
+    "Never pass art: handles as url/path (see prompt + Action guard).",
+    "tool_arguments dict passed verbatim to MCP after validation.",
+    "No regex on LLM output — JSON validated by Pydantic."
+  ]
+}

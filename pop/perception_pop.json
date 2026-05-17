@@ -1,0 +1,18 @@
+{
+  "module": "perception",
+  "output_model": "PerceptionLLMResponse",
+  "output_schema_module": "schemas:PerceptionGoalDraft { text, done, artifact_index }",
+  "llm_contract": {
+    "sdk": "google-genai",
+    "response_mime_type": "application/json",
+    "response_schema_pydantic": "PerceptionLLMResponse",
+    "temperature": 1.0
+  },
+  "observe_signature": "observe(query, hits: list[MemoryItem], history: list[dict], prior_goals: list[Goal], run_id: str) -> Observation",
+  "prompt_constraints_digest": [
+    "Goals identified by stable Goal.id assigned by outer loop (merged by position).",
+    "artifact_index refers only to enumerated MEMORY HITS that carry artifact_id.",
+    "Sticky-done via prior_goals.done OR history evidence.",
+    "Validation = Pydantic parse only (no regex on LLM JSON)."
+  ]
+}

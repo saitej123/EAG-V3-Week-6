@@ -1,0 +1,853 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Commerce Concierge — Price Analysis</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/ansi_up@5.2.1/ansi_up.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+    <style>
+        :root {
+            --surface: #f1f5f9;
+            --log-bg: #0c1222;
+            --log-border: rgba(148, 163, 184, 0.18);
+        }
+        body {
+            font-family: "DM Sans", ui-sans-serif, system-ui, -apple-system, sans-serif;
+            background: radial-gradient(1200px 600px at 10% -10%, rgba(15, 23, 42, 0.06), transparent),
+                        radial-gradient(900px 500px at 90% 0%, rgba(59, 130, 246, 0.07), transparent),
+                        var(--surface);
+        }
+        .card-elevated {
+            border: 1px solid rgba(15, 23, 42, 0.06);
+            box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04), 0 12px 40px rgba(15, 23, 42, 0.06);
+        }
+        .terminal-wrap {
+            border-radius: 14px;
+            border: 1px solid var(--log-border);
+            background: linear-gradient(180deg, #111827 0%, var(--log-bg) 48%);
+            box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 24px 48px rgba(2, 6, 23, 0.35);
+            overflow: hidden;
+        }
+        .terminal-chrome {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+            background: linear-gradient(180deg, rgba(255,255,255,0.05), transparent);
+        }
+        .dot { width: 10px; height: 10px; border-radius: 999px; }
+        .dot-r { background: #fb7185; box-shadow: 0 0 0 1px rgba(0,0,0,0.2) inset; }
+        .dot-y { background: #fbbf24; box-shadow: 0 0 0 1px rgba(0,0,0,0.2) inset; }
+        .dot-g { background: #34d399; box-shadow: 0 0 0 1px rgba(0,0,0,0.2) inset; }
+        .terminal-title {
+            font-size: 11px;
+            letter-spacing: 0.06em;
+            text-transform: uppercase;
+            color: rgba(226, 232, 240, 0.65);
+            font-weight: 600;
+        }
+        .log-scroll {
+            font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 12.5px;
+            line-height: 1.55;
+            color: #e2e8f0;
+            background: var(--log-bg);
+            padding: 14px 16px 18px;
+            overflow-y: auto;
+            flex: 1 1 auto;
+            min-height: 280px;
+            max-height: min(52vh, 560px);
+        }
+        .log-placeholder {
+            color: rgba(226, 232, 240, 0.55);
+        }
+        @media (min-width: 1024px) {
+            .log-scroll {
+                min-height: 360px;
+                max-height: none;
+                flex: 1;
+            }
+        }
+        .log-line {
+            margin: 0 0 0.4rem 0;
+            word-break: break-word;
+            white-space: pre-wrap;
+        }
+        .log-line .ansi-bright-white { color: #f8fafc !important; }
+        .scrollbar-thin::-webkit-scrollbar { width: 9px; height: 9px; }
+        .scrollbar-thin::-webkit-scrollbar-thumb {
+            background: rgba(148, 163, 184, 0.35);
+            border-radius: 999px;
+            border: 2px solid transparent;
+            background-clip: padding-box;
+        }
+        .pill-store {
+            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        }
+        .pill-store:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+        }
+        .pill-store:focus-visible {
+            outline: 2px solid rgb(15 23 42);
+            outline-offset: 2px;
+        }
+        .logo-ring {
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 30px rgba(15, 23, 42, 0.25);
+        }
+        .example-chip {
+            text-align: left;
+            transition: border-color 0.15s ease, background-color 0.15s ease, box-shadow 0.15s ease;
+        }
+        .example-chip:hover {
+            border-color: rgba(15, 23, 42, 0.14);
+            background-color: rgba(248, 250, 252, 0.95);
+            box-shadow: 0 2px 8px rgba(15, 23, 42, 0.06);
+        }
+        .example-chip:focus-visible {
+            outline: 2px solid rgb(15 23 42);
+            outline-offset: 2px;
+        }
+        .example-chip-compact {
+            text-align: left;
+            transition: border-color 0.15s ease, background-color 0.15s ease;
+        }
+        .example-chip-compact:hover {
+            border-color: rgba(15, 23, 42, 0.18);
+            background-color: rgba(248, 250, 252, 0.98);
+        }
+        .example-chip-compact:focus-visible {
+            outline: 2px solid rgb(15 23 42);
+            outline-offset: 2px;
+        }
+        .sidebar-tab-btn {
+            border-left-width: 2px;
+            border-left-style: solid;
+            text-align: left;
+            width: 100%;
+        }
+        @media (min-width: 1024px) {
+            .sidebar-examples-scroll {
+                max-height: min(60vh, 520px);
+            }
+        }
+        .layout-main {
+            display: flex;
+            flex-direction: column;
+            gap: 1.25rem;
+            min-height: 0;
+            flex: 1 1 auto;
+        }
+        @media (min-width: 1024px) {
+            .layout-main {
+                min-height: calc(100vh - 7rem);
+            }
+        }
+        .console-card.console-collapsed .terminal-wrap {
+            display: none;
+        }
+        .console-card.console-collapsed {
+            padding-bottom: 1rem;
+        }
+        .console-card.console-expanded:not(.console-collapsed) .log-scroll {
+            min-height: min(58vh, 720px);
+            max-height: min(88vh, 960px);
+        }
+        /* Rendered agent answer (markdown → HTML) */
+        .result-rich {
+            font-size: 0.9375rem;
+            line-height: 1.65;
+            color: #0f172a;
+        }
+        .result-rich h1 { font-size: 1.35rem; font-weight: 700; margin: 1rem 0 0.5rem; letter-spacing: -0.02em; }
+        .result-rich h2 { font-size: 1.15rem; font-weight: 650; margin: 1rem 0 0.45rem; color: #0f172a; }
+        .result-rich h3 { font-size: 1.05rem; font-weight: 600; margin: 0.85rem 0 0.35rem; }
+        .result-rich p { margin: 0.5rem 0; }
+        .result-rich ul, .result-rich ol { margin: 0.45rem 0 0.55rem 1.35rem; }
+        .result-rich li { margin: 0.2rem 0; }
+        .result-rich table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 0.85rem 0;
+            font-size: 0.875rem;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #e2e8f0;
+        }
+        .result-rich th, .result-rich td {
+            border-bottom: 1px solid #e2e8f0;
+            padding: 0.55rem 0.65rem;
+            text-align: left;
+            vertical-align: top;
+        }
+        .result-rich thead th {
+            background: linear-gradient(180deg, #f8fafc, #f1f5f9);
+            font-weight: 600;
+            color: #334155;
+        }
+        .result-rich tbody tr:nth-child(even) { background: rgba(248, 250, 252, 0.65); }
+        .result-rich hr { margin: 1rem 0; border: 0; border-top: 1px solid #e2e8f0; }
+        .result-rich code {
+            font-family: ui-monospace, "JetBrains Mono", monospace;
+            font-size: 0.84em;
+            background: #f1f5f9;
+            padding: 0.12em 0.38em;
+            border-radius: 5px;
+            color: #0f172a;
+        }
+        .result-rich pre {
+            background: #0f172a;
+            color: #e2e8f0;
+            padding: 1rem 1.1rem;
+            border-radius: 10px;
+            overflow-x: auto;
+            font-size: 0.82rem;
+            margin: 0.65rem 0;
+        }
+        .result-rich pre code { background: transparent; padding: 0; color: inherit; font-size: inherit; }
+        .result-rich blockquote {
+            border-left: 4px solid #94a3b8;
+            margin: 0.6rem 0;
+            padding: 0.35rem 0 0.35rem 1rem;
+            color: #475569;
+            background: rgba(248, 250, 252, 0.9);
+            border-radius: 0 8px 8px 0;
+        }
+        .result-rich strong { font-weight: 650; color: #020617; }
+        .result-rich a { color: #1d4ed8; text-decoration: underline; text-underline-offset: 2px; }
+    </style>
+</head>
+<body class="min-h-screen text-slate-900 antialiased">
+
+<div class="mx-auto flex max-w-[1600px] flex-col gap-6 px-4 py-10 pb-12 lg:flex-row lg:items-start lg:gap-8 xl:gap-10">
+    <aside class="w-full lg:w-[300px] lg:shrink-0">
+        <div class="card-elevated overflow-hidden rounded-2xl bg-white">
+            <div id="sidebarTablist" class="flex flex-col divide-y divide-slate-200/90 border-b border-slate-200/90" role="tablist" aria-label="Sidebar sections">
+                <button type="button" id="tabOverviewBtn" role="tab" aria-selected="true" aria-controls="panelOverview" class="sidebar-tab-btn tab-trigger border-l-slate-900 bg-slate-50/80 px-3 py-3 text-xs font-semibold leading-snug text-slate-900 transition hover:bg-slate-50 sm:text-[13px]">
+                    Overview
+                </button>
+                <button type="button" id="tabExamplesBtn" role="tab" aria-selected="false" aria-controls="panelExamples" class="sidebar-tab-btn tab-trigger flex flex-wrap items-center gap-x-2 gap-y-1 border-l-transparent px-3 py-3 text-xs font-semibold leading-snug text-slate-500 transition hover:bg-slate-50/80 hover:text-slate-700 sm:text-[13px]">
+                    <span>Examples</span>
+                    <span id="examplesCountBadge" class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-slate-600 tabular-nums"></span>
+                </button>
+                <button type="button" id="tabStoresBtn" role="tab" aria-selected="false" aria-controls="panelStores" class="sidebar-tab-btn tab-trigger border-l-transparent px-3 py-3 text-xs font-semibold leading-snug text-slate-500 transition hover:bg-slate-50/80 hover:text-slate-700 sm:text-[13px]">
+                    Stores
+                </button>
+            </div>
+
+            <div id="panelOverview" role="tabpanel" aria-labelledby="tabOverviewBtn" class="space-y-4 p-5">
+                <div class="flex items-start gap-3">
+                    <div class="logo-ring flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-gradient-to-br from-slate-900 to-slate-700 text-white">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="h-6 w-6" aria-hidden="true">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 10.5V6a3.75 3.75 0 10-7.5 0v4.5m11.356-1.993l1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 01-1.12-1.243l1.264-12A1.125 1.125 0 015.513 7.5h12.974c.576 0 1.059.435 1.119 1.007z" />
+                        </svg>
+                    </div>
+                    <div class="min-w-0">
+                        <p class="text-[11px] font-semibold uppercase tracking-wider text-slate-400">Workspace</p>
+                        <h1 class="mt-0.5 text-lg font-bold tracking-tight text-slate-900">E‑Commerce Concierge</h1>
+                        <p class="mt-1.5 text-xs leading-relaxed text-slate-500">Compare Indian retailers, remember card facts, fetch PDPs, and show net‑effective pricing.</p>
+                    </div>
+                </div>
+
+                <div class="border-t border-slate-100 pt-4">
+                    <h2 class="text-sm font-semibold text-slate-900">Log connection</h2>
+                    <p class="mt-1 text-[11px] leading-snug text-slate-500">Browser ↔ server stream for live traces.</p>
+                    <p id="streamStatus" class="mt-3 inline-flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
+                        <span id="streamDot" class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400"></span>
+                        <span id="streamLabel">Connecting…</span>
+                    </p>
+                    <p class="mt-3 text-[11px] leading-relaxed text-slate-500">One agent run at a time — wait for completion before starting another.</p>
+                </div>
+            </div>
+
+            <div id="panelExamples" role="tabpanel" aria-labelledby="tabExamplesBtn" class="hidden p-4">
+                <p class="text-xs leading-snug text-slate-500">More presets — tap to load into intent (edit, then Run).</p>
+                <div id="sidebarExampleGrid" class="sidebar-examples-scroll mt-3 flex flex-col gap-2 overflow-y-auto pb-1 scrollbar-thin pr-0.5" role="group" aria-label="Additional example prompts"></div>
+            </div>
+
+            <div id="panelStores" role="tabpanel" aria-labelledby="tabStoresBtn" class="hidden p-4">
+                <p class="text-xs leading-snug text-slate-500">Indian retailers — opens in a new tab.</p>
+                <div class="sidebar-examples-scroll mt-3 flex flex-wrap gap-2 overflow-y-auto pb-1 scrollbar-thin pr-0.5" role="group" aria-label="Marketplace shortcuts">
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.flipkart.com" target="_blank" rel="noopener noreferrer">Flipkart</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.amazon.in" target="_blank" rel="noopener noreferrer">Amazon.in</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.myntra.com" target="_blank" rel="noopener noreferrer">Myntra</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.ajio.com" target="_blank" rel="noopener noreferrer">Ajio</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.nykaa.com" target="_blank" rel="noopener noreferrer">Nykaa</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.meesho.com" target="_blank" rel="noopener noreferrer">Meesho</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.tatacliq.com" target="_blank" rel="noopener noreferrer">Tata CLiQ</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.croma.com" target="_blank" rel="noopener noreferrer">Croma</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.reliancedigital.in" target="_blank" rel="noopener noreferrer">Reliance Digital</a>
+                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.snapdeal.com" target="_blank" rel="noopener noreferrer">Snapdeal</a>
+                </div>
+            </div>
+        </div>
+    </aside>
+
+    <main class="layout-main min-w-0 flex-1">
+        <div class="card-elevated rounded-2xl bg-white p-6 sm:p-7">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                    <label for="query" class="text-sm font-semibold text-slate-800">Intent</label>
+                    <p class="mt-1 max-w-2xl text-xs text-slate-500">Describe what you want in plain English, paste product URLs, or load an example — then edit before running.</p>
+                </div>
+                <span class="hidden rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:inline">Ctrl+Enter run</span>
+            </div>
+
+            <textarea id="query" name="query" rows="5" class="mt-4 min-h-[8.5rem] w-full resize-y rounded-xl border border-slate-200 bg-slate-50/50 px-4 py-3 text-sm text-slate-900 shadow-inner outline-none transition placeholder:text-slate-400 focus:border-slate-900 focus:bg-white focus:ring-2 focus:ring-slate-900/10" placeholder="e.g. Compare MacBook Air M3 512GB — Amazon.in vs Flipkart with HDFC offers, or paste a Flipkart PDP link…" autocomplete="off"></textarea>
+
+            <div class="mt-4">
+                <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Quick examples</p>
+                <div id="featuredExamplesRow" class="mt-2 flex flex-wrap gap-2" role="group" aria-label="Featured example prompts"></div>
+                <p class="mt-2 text-[11px] text-slate-400"><span class="text-slate-500">More presets:</span> sidebar <span class="font-semibold text-slate-600">Examples</span> tab. Retailer shortcuts: <span class="font-semibold text-slate-600">Stores</span> tab.</p>
+            </div>
+
+            <div id="formHint" class="mt-4 min-h-[1.25rem] text-xs text-amber-700" role="status" aria-live="polite"></div>
+
+            <div class="mt-5 flex flex-wrap items-center gap-3">
+                <button id="runBtn" type="button" class="rounded-xl bg-slate-900 px-6 py-2.5 text-sm font-semibold text-white shadow-lg shadow-slate-900/15 transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-55">
+                    Run agent
+                </button>
+                <button id="clearBtn" type="button" class="rounded-xl border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:bg-slate-50">
+                    Clear console
+                </button>
+                <button id="clearIntentBtn" type="button" class="rounded-xl border border-transparent px-3 py-2.5 text-sm font-medium text-slate-600 underline-offset-2 hover:bg-slate-50 hover:text-slate-900 hover:underline">
+                    Clear intent
+                </button>
+            </div>
+            <p class="mt-3 text-[11px] text-slate-400 sm:hidden">Tip: use Ctrl+Enter in the box to run.</p>
+        </div>
+
+        <section id="resultPanel" class="card-elevated hidden scroll-mt-6 rounded-2xl border border-emerald-200/90 bg-gradient-to-b from-emerald-50/95 via-white to-white p-6 shadow-sm" aria-labelledby="resultHeading">
+            <div class="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-100/90 pb-3">
+                <div>
+                    <h2 id="resultHeading" class="text-sm font-semibold text-emerald-950">Agent result</h2>
+                    <p class="mt-0.5 max-w-xl text-[11px] leading-snug text-emerald-900/65">Session&nbsp;6 cognitive loop — markdown answer from <code class="rounded bg-emerald-100/80 px-1 py-0.5 text-[10px] text-emerald-950">FINAL ANSWER</code> / <code class="rounded bg-emerald-100/80 px-1 py-0.5 text-[10px] text-emerald-950">UI_RESULT_JSON</code>. Full trace in the console.</p>
+                </div>
+                <button type="button" id="resultPanelClose" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50">
+                    Hide result
+                </button>
+            </div>
+            <div id="resultBody" class="result-rich scrollbar-thin mt-4 max-h-[min(70vh,760px)] overflow-y-auto pr-1"></div>
+        </section>
+
+        <div id="consoleCard" class="console-card card-elevated min-h-0 rounded-2xl bg-white p-6">
+            <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
+                <div>
+                    <h2 class="text-sm font-semibold text-slate-900">Live console</h2>
+                    <p class="mt-0.5 text-xs text-slate-500">Agent trace • auto‑scroll • read‑only</p>
+                </div>
+                <div class="flex flex-wrap items-center gap-2">
+                    <button type="button" id="consoleCollapseBtn" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50" aria-expanded="true" aria-controls="consoleTerminal">
+                        Hide logs
+                    </button>
+                    <button type="button" id="consoleExpandBtn" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50" title="Toggle taller log viewport">
+                        Taller
+                    </button>
+                    <span class="rounded-full bg-slate-100 px-3 py-1 text-[11px] font-medium text-slate-500">Read-only</span>
+                </div>
+            </div>
+            <div id="consoleTerminal" class="terminal-wrap flex min-h-[280px] flex-1 flex-col lg:min-h-0">
+                <div class="terminal-chrome shrink-0">
+                    <span class="dot dot-r" aria-hidden="true"></span>
+                    <span class="dot dot-y" aria-hidden="true"></span>
+                    <span class="dot dot-g" aria-hidden="true"></span>
+                    <span class="terminal-title">Live trace</span>
+                </div>
+                <div id="logs" class="log-scroll scrollbar-thin min-h-0 flex-1">
+                    <div class="log-placeholder text-sm">Waiting for stream… logs appear here when you run the agent.</div>
+                </div>
+            </div>
+        </div>
+    </main>
+</div>
+
+<script>
+(function () {
+    const logsDiv = document.getElementById('logs');
+    const runBtn = document.getElementById('runBtn');
+    const clearBtn = document.getElementById('clearBtn');
+    const clearIntentBtn = document.getElementById('clearIntentBtn');
+    const queryInput = document.getElementById('query');
+    const streamDot = document.getElementById('streamDot');
+    const streamLabel = document.getElementById('streamLabel');
+    const tabOverviewBtn = document.getElementById('tabOverviewBtn');
+    const tabExamplesBtn = document.getElementById('tabExamplesBtn');
+    const tabStoresBtn = document.getElementById('tabStoresBtn');
+    const panelOverview = document.getElementById('panelOverview');
+    const panelExamples = document.getElementById('panelExamples');
+    const panelStores = document.getElementById('panelStores');
+    const sidebarExampleGrid = document.getElementById('sidebarExampleGrid');
+    const featuredExamplesRow = document.getElementById('featuredExamplesRow');
+    const examplesCountBadge = document.getElementById('examplesCountBadge');
+    const formHint = document.getElementById('formHint');
+    const consoleCard = document.getElementById('consoleCard');
+    const consoleCollapseBtn = document.getElementById('consoleCollapseBtn');
+    const consoleExpandBtn = document.getElementById('consoleExpandBtn');
+    const resultPanel = document.getElementById('resultPanel');
+    const resultBody = document.getElementById('resultBody');
+    const resultPanelClose = document.getElementById('resultPanelClose');
+
+    if (
+        !logsDiv ||
+        !runBtn ||
+        !clearBtn ||
+        !clearIntentBtn ||
+        !queryInput ||
+        !streamDot ||
+        !streamLabel ||
+        !tabOverviewBtn ||
+        !tabExamplesBtn ||
+        !tabStoresBtn ||
+        !panelOverview ||
+        !panelExamples ||
+        !panelStores ||
+        !sidebarExampleGrid ||
+        !featuredExamplesRow ||
+        !examplesCountBadge
+    ) {
+        console.warn('[concierge-ui] Missing required DOM nodes; script aborted.');
+        return;
+    }
+
+    function setFormHint(msg) {
+        if (formHint) formHint.textContent = msg || '';
+    }
+
+    function fillIntentFromExample(ex) {
+        queryInput.value = ex.text;
+        setFormHint('');
+        queryInput.focus();
+        queryInput.setSelectionRange(queryInput.value.length, queryInput.value.length);
+    }
+
+    function bindExampleButton(btn, ex) {
+        btn.addEventListener('click', function () {
+            fillIntentFromExample(ex);
+        });
+    }
+
+    function styleTabSelected(btn, on) {
+        btn.classList.toggle('border-l-slate-900', on);
+        btn.classList.toggle('bg-slate-50/80', on);
+        btn.classList.toggle('border-l-transparent', !on);
+        btn.classList.toggle('bg-transparent', !on);
+        btn.classList.toggle('text-slate-900', on);
+        btn.classList.toggle('text-slate-500', !on);
+    }
+
+    const TAB_ORDER = ['overview', 'examples', 'stores'];
+    const tabButtons = {
+        overview: tabOverviewBtn,
+        examples: tabExamplesBtn,
+        stores: tabStoresBtn,
+    };
+    const panels = {
+        overview: panelOverview,
+        examples: panelExamples,
+        stores: panelStores,
+    };
+
+    function activateTab(name) {
+        TAB_ORDER.forEach(function (id) {
+            const selected = id === name;
+            panels[id].classList.toggle('hidden', !selected);
+            tabButtons[id].setAttribute('aria-selected', selected ? 'true' : 'false');
+            styleTabSelected(tabButtons[id], selected);
+        });
+    }
+
+    function tabIndex(id) {
+        return TAB_ORDER.indexOf(id);
+    }
+
+    function focusTabByDelta(fromId, delta) {
+        const i = tabIndex(fromId);
+        if (i < 0) return;
+        const next = TAB_ORDER[(i + delta + TAB_ORDER.length) % TAB_ORDER.length];
+        activateTab(next);
+        tabButtons[next].focus();
+    }
+
+    tabOverviewBtn.addEventListener('click', function () {
+        activateTab('overview');
+    });
+    tabExamplesBtn.addEventListener('click', function () {
+        activateTab('examples');
+    });
+    tabStoresBtn.addEventListener('click', function () {
+        activateTab('stores');
+    });
+
+    tabOverviewBtn.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            focusTabByDelta('overview', 1);
+        }
+    });
+    tabExamplesBtn.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            focusTabByDelta('examples', 1);
+        } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            focusTabByDelta('examples', -1);
+        }
+    });
+    tabStoresBtn.addEventListener('keydown', function (e) {
+        if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+            e.preventDefault();
+            focusTabByDelta('stores', -1);
+        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
+            e.preventDefault();
+            focusTabByDelta('stores', 1);
+        }
+    });
+
+    const USER_EXAMPLES = [
+        {
+            title: 'Split AC under ₹40k (two sites)',
+            hint: 'ICICI context • Amazon.in vs Flipkart • PDP fetch',
+            text: 'I use an ICICI Bank credit card with typical online shopping offers. Search for 1.5 ton split inverter AC under ₹40,000 on Amazon.in and Flipkart, open credible PDP links for one strong pick per site, extract price and bank-offer text, and compare list vs net effective price.',
+        },
+        {
+            title: 'MacBook Air M3 — who is cheaper?',
+            hint: 'Cross-retailer • bank offers',
+            text: 'Compare MacBook Air 13-inch M3 chip with 512GB SSD on Amazon.in vs Flipkart: list price, delivery/EMI hints if visible, and likely net price after common bank-card cashback lines (say HDFC / Axis style offers). Note uncertainty where PDP text is missing.',
+        },
+        {
+            title: 'Paste a PDP URL',
+            hint: 'Direct extraction',
+            text: 'Fetch this product page and summarise title, current selling price, MRP if shown, key specs in bullets, and any visible bank or exchange offers: paste your Flipkart or Amazon.in URL here.',
+        },
+        {
+            title: 'Mid-range phone hunt',
+            hint: 'Search → shortlist → compare',
+            text: 'Find 5G smartphones around ₹22,000–₹28,000 on Indian marketplaces (prefer Flipkart and Amazon.in links). Shortlist three models with roughly comparable RAM/storage, fetch one PDP each, and compare net effective price after typical card offers.',
+        },
+        {
+            title: 'Remember my card, then quote',
+            hint: 'Memory + follow-up style',
+            text: 'Remember: I usually pay with HDFC Infinia for e-commerce and care about 10X or smartbuy-style redemption language when mentioned on PDPs. Then suggest whether to buy a Bosch front-load washing machine on Amazon.in or Flipkart today based on visible net price.',
+        },
+        {
+            title: 'Festive sale sanity check',
+            hint: 'Noise vs real discount',
+            text: 'Search for \"Samsung 55 inch 4K TV\" deals on Amazon Great Indian Festival vs Flipkart Big Billion Days style messaging (use current year). Pick one comparable model family if exact SKU differs, fetch two PDPs, and explain whether the discount looks real vs inflated MRP.',
+        },
+        {
+            title: 'Fashion pickup — same brand',
+            hint: 'Nykaa / Ajio / Myntra awareness',
+            text: 'Compare Levi\'s 511 slim fit jeans (similar wash) across Myntra and Ajio: price after coupons if shown, return policy snippet if visible, and your pick for lowest hassle.',
+        },
+        {
+            title: 'Audio gear quick compare',
+            hint: 'Specs + price matrix',
+            text: 'Sony WH-1000XM5 vs Bose QuietComfort Ultra headphones on Indian retailers: gather Amazon.in and Flipkart URLs via search, fetch both PDPs, and output a small table (price, colour options, warranty hint if any).',
+        },
+        {
+            title: 'Saved catalog recall',
+            hint: 'SQLite cache via agent tools',
+            text: 'What products are already saved in my local commerce cache? List recent rows with platform, name, and net price if available; if empty, say so and suggest one PDP fetch to seed the DB.',
+        },
+        {
+            title: 'Image URL → identify → price',
+            hint: 'Vision + web grounding',
+            text: 'Here is an image URL of a retail shelf / phone screen (paste HTTPS image link). Identify the product textually if possible, then web-search Indian listings and give a rough price band with sources.',
+        },
+    ];
+
+    const FEATURED_COUNT = 3;
+    const featured = USER_EXAMPLES.slice(0, FEATURED_COUNT);
+    const rest = USER_EXAMPLES.slice(FEATURED_COUNT);
+
+    examplesCountBadge.textContent = rest.length > 0 ? String(rest.length) : '';
+
+    featured.forEach(function (ex) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+            'example-chip-compact max-w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-left sm:max-w-[calc(33.333%-0.5rem)] sm:min-w-[200px] flex-1';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'block text-xs font-semibold leading-snug text-slate-900';
+        titleEl.textContent = ex.title;
+        const hintEl = document.createElement('span');
+        hintEl.className = 'mt-0.5 block text-[10px] font-normal leading-snug text-slate-500';
+        hintEl.textContent = ex.hint;
+        btn.appendChild(titleEl);
+        btn.appendChild(hintEl);
+        bindExampleButton(btn, ex);
+        featuredExamplesRow.appendChild(btn);
+    });
+
+    rest.forEach(function (ex) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className =
+            'example-chip shrink-0 rounded-lg border border-slate-200/95 bg-white px-3 py-2.5 text-left text-[11px] text-slate-800';
+        const titleEl = document.createElement('span');
+        titleEl.className = 'font-semibold leading-snug';
+        titleEl.textContent = ex.title;
+        const hintEl = document.createElement('span');
+        hintEl.className = 'mt-1 block text-[10px] leading-snug text-slate-500';
+        hintEl.textContent = ex.hint;
+        btn.appendChild(titleEl);
+        btn.appendChild(hintEl);
+        bindExampleButton(btn, ex);
+        sidebarExampleGrid.appendChild(btn);
+    });
+
+    if (consoleCard && consoleCollapseBtn && consoleExpandBtn) {
+        function syncConsoleChromeButtons() {
+            const collapsed = consoleCard.classList.contains('console-collapsed');
+            consoleCollapseBtn.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+            consoleCollapseBtn.textContent = collapsed ? 'Show logs' : 'Hide logs';
+            consoleExpandBtn.disabled = collapsed;
+            consoleExpandBtn.classList.toggle('opacity-45', collapsed);
+            consoleExpandBtn.classList.toggle('cursor-not-allowed', collapsed);
+        }
+
+        consoleCollapseBtn.addEventListener('click', function () {
+            consoleCard.classList.toggle('console-collapsed');
+            if (consoleCard.classList.contains('console-collapsed')) {
+                consoleCard.classList.remove('console-expanded');
+                consoleExpandBtn.textContent = 'Taller';
+            }
+            syncConsoleChromeButtons();
+        });
+
+        consoleExpandBtn.addEventListener('click', function () {
+            if (consoleCard.classList.contains('console-collapsed')) return;
+            consoleCard.classList.toggle('console-expanded');
+            consoleExpandBtn.textContent = consoleCard.classList.contains('console-expanded')
+                ? 'Normal height'
+                : 'Taller';
+        });
+
+        syncConsoleChromeButtons();
+    }
+
+    const ansiUp = typeof AnsiUp !== 'undefined' ? new AnsiUp() : null;
+    if (ansiUp) {
+        ansiUp.use_classes = false;
+    }
+
+    let evtSource = null;
+    let reconnectTimer = null;
+
+    function setStreamState(ok, label) {
+        streamDot.className = 'h-2 w-2 shrink-0 rounded-full ' + (ok ? 'bg-emerald-500' : 'bg-amber-400') + (ok ? '' : ' animate-pulse');
+        streamLabel.textContent = label;
+    }
+
+    function stripAnsi(s) {
+        return String(s).replace(/\x1b\[[0-9;]*m/g, '');
+    }
+
+    function escapeHtmlPlain(s) {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+
+    function hideResultPanel() {
+        if (!resultPanel || !resultBody) return;
+        resultPanel.classList.add('hidden');
+        resultBody.innerHTML = '';
+    }
+
+    function showResultMarkdown(markdownText) {
+        if (!resultPanel || !resultBody) return;
+        let html = '';
+        const md = markdownText || '';
+        if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
+            try {
+                html = marked.parse(md, { async: false, breaks: true });
+            } catch (err) {
+                console.warn('[concierge-ui] marked.parse failed', err);
+                html = '<pre class="whitespace-pre-wrap font-sans text-sm text-slate-800">' + escapeHtmlPlain(md) + '</pre>';
+            }
+        } else {
+            html = '<pre class="whitespace-pre-wrap font-sans text-sm text-slate-800">' + escapeHtmlPlain(md) + '</pre>';
+        }
+        if (typeof DOMPurify !== 'undefined' && typeof DOMPurify.sanitize === 'function') {
+            html = DOMPurify.sanitize(html, { USE_PROFILES: { html: true } });
+        }
+        resultBody.innerHTML = html;
+        resultPanel.classList.remove('hidden');
+        try {
+            resultPanel.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } catch (err) {
+            /* ignore */
+        }
+    }
+
+    function consumeUiResultLine(rawPart) {
+        const plain = stripAnsi(rawPart).trim();
+        const prefix = '[UI_RESULT_JSON]';
+        if (!plain.startsWith(prefix)) return false;
+        const jsonStr = plain.slice(prefix.length).trim();
+        try {
+            const data = JSON.parse(jsonStr);
+            if (data && typeof data.text === 'string') {
+                showResultMarkdown(data.text);
+                resetRunButton();
+                return true;
+            }
+        } catch (err) {
+            console.warn('[concierge-ui] Bad UI_RESULT_JSON', err);
+        }
+        return false;
+    }
+
+    function clearPlaceholderIfNeeded() {
+        const ph = logsDiv.querySelector('.log-placeholder');
+        if (ph) ph.remove();
+    }
+
+    function appendLog(rawText) {
+        if (!rawText) return;
+        clearPlaceholderIfNeeded();
+
+        const line = document.createElement('div');
+        line.className = 'log-line';
+        if (ansiUp) {
+            line.innerHTML = ansiUp.ansi_to_html(rawText);
+        } else {
+            line.textContent = rawText;
+        }
+        logsDiv.appendChild(line);
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+    }
+
+    function resetRunButton() {
+        runBtn.disabled = false;
+        runBtn.textContent = 'Run agent';
+        runBtn.classList.remove('opacity-55');
+        setFormHint('');
+    }
+
+    function maybeComplete(rawText) {
+        const text = stripAnsi(rawText);
+        if (
+            text.includes('[agent] RUN_COMPLETE') ||
+            text.includes('reason=global_timeout') ||
+            text.includes('reason=run_failed') ||
+            text.includes('[agent] Run failed') ||
+            text.includes('All goals done. Concluding') ||
+            text.includes('Reached max iterations without completion') ||
+            text.includes('>>> FINAL ANSWER <<<')
+        ) {
+            resetRunButton();
+        }
+    }
+
+    function connectSSE() {
+        if (evtSource) {
+            evtSource.close();
+            evtSource = null;
+        }
+        setStreamState(false, 'Connecting…');
+        evtSource = new EventSource('/stream-logs');
+
+        evtSource.onopen = function () {
+            setStreamState(true, 'Connected — streaming');
+            if (reconnectTimer) {
+                clearTimeout(reconnectTimer);
+                reconnectTimer = null;
+            }
+        };
+
+        evtSource.onmessage = function (event) {
+            const payload = event.data || '';
+            payload.split('\n').forEach(function (part) {
+                if (!part.length) return;
+                if (consumeUiResultLine(part)) return;
+                appendLog(part);
+                maybeComplete(part);
+            });
+        };
+
+        evtSource.onerror = function () {
+            setStreamState(false, 'Reconnecting…');
+            evtSource.close();
+            evtSource = null;
+            reconnectTimer = setTimeout(connectSSE, 1500);
+        };
+    }
+
+    connectSSE();
+
+    clearBtn.addEventListener('click', function () {
+        logsDiv.innerHTML = '<div class="log-placeholder text-sm">Console cleared.</div>';
+        hideResultPanel();
+    });
+
+    if (resultPanelClose && resultPanel) {
+        resultPanelClose.addEventListener('click', hideResultPanel);
+    }
+
+    clearIntentBtn.addEventListener('click', function () {
+        queryInput.value = '';
+        setFormHint('');
+        queryInput.focus();
+    });
+
+    async function startAgentRun() {
+        const query = queryInput.value.trim();
+        if (!query) {
+            setFormHint('Add an intent, pick a quick example, or open Examples / Stores in the sidebar.');
+            queryInput.focus();
+            return;
+        }
+        setFormHint('Running… Formatted answer appears in Agent result when ready; trace streams below.');
+        hideResultPanel();
+
+        runBtn.disabled = true;
+        runBtn.textContent = 'Running…';
+        runBtn.classList.add('opacity-55');
+
+        try {
+            const res = await fetch('/run-agent', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query }),
+            });
+            if (!res.ok) {
+                let msg = 'HTTP ' + res.status + ' ' + res.statusText;
+                if (res.status === 429) {
+                    try {
+                        const body = await res.json();
+                        if (body && body.detail) msg = String(body.detail);
+                    } catch (err) { /* ignore */ }
+                    appendLog('[UI] Agent busy — another run is still in progress. ' + msg);
+                } else {
+                    appendLog('Error starting agent: ' + msg);
+                }
+                resetRunButton();
+                return;
+            }
+        } catch (e) {
+            appendLog('Network error starting agent.');
+            resetRunButton();
+        }
+    }
+
+    runBtn.addEventListener('click', startAgentRun);
+
+    queryInput.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+            e.preventDefault();
+            startAgentRun();
+        }
+    });
+})();
+</script>
+</body>
+</html>

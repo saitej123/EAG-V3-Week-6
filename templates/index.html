@@ -79,8 +79,18 @@
             margin: 0 0 0.4rem 0;
             word-break: break-word;
             white-space: pre-wrap;
+            color: #e2e8f0;
+        }
+        /* Loguru/ANSI blue is illegible on the dark console — force readable slate/cyan */
+        .log-scroll .log-line span[style*="color:blue"],
+        .log-scroll .log-line span[style*="color: blue"],
+        .log-scroll .log-line span[style*="rgb(0, 0, 255)"],
+        .log-scroll .log-line span[style*="rgb(0,0,255)"] {
+            color: #cbd5e1 !important;
         }
         .log-line .ansi-bright-white { color: #f8fafc !important; }
+        .log-line .ansi-bright-blue,
+        .log-line .ansi-blue { color: #cbd5e1 !important; }
         .scrollbar-thin::-webkit-scrollbar { width: 9px; height: 9px; }
         .scrollbar-thin::-webkit-scrollbar-thumb {
             background: rgba(148, 163, 184, 0.35);

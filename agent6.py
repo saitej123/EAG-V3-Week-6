@@ -19,7 +19,7 @@ os.environ["CRAWL4AI_BASE_DIRECTORY"] = str(_BASE_DIR / ".crawl4ai")
 from dotenv import load_dotenv
 from loguru import logger
 
-from action import ActionActuator
+from action import ActionActuator, summarize_tool_result
 from artifact_store import ArtifactStore
 from decision import DecisionModule, fallback_iteration_budget_markdown
 from llm_env import agent_llm_step_timeout_seconds, agent_max_iterations
@@ -36,6 +36,46 @@ from search_providers import (
 
 # Cap artifact bytes sent to Decision LLM (large Wikipedia pages slow synthesis ~80s+).
 MAX_DECISION_ATTACH_CHARS = 12_000
+_CONTINUATION = " " * 16
+
+
+def _log_iter_header(iter_num: int) -> None:
+    logger.info(f"─── iter {iter_num} ───")
+
+
+def _log_perception(goals: list[Goal]) -> None:
+    for idx, g in enumerate(goals):
+        status = "done" if g.done else "open"
+        text = g.text.strip()
+        if len(text) > 100:
+            text = text[:97] + "..."
+        if idx == 0:
+            logger.info(f"[perception]    [{status}] {text}")
+        else:
+            logger.info(f"{_CONTINUATION}[{status}] {text}")
+
+
+def _log_decision_tool(tc: ToolCall) -> None:
+    args_json = json.dumps(tc.arguments, ensure_ascii=False)
+    logger.info(f"[decision]      TOOL_CALL: {tc.name}({args_json})")
+
+
+def _log_decision_answer(answer: str) -> None:
+    lines = (answer or "").strip().splitlines()
+    if not lines:
+        logger.info("[decision]      ANSWER: (empty)")
+        return
+    logger.info(f"[decision]      ANSWER: {lines[0]}")
+    for line in lines[1:]:
+        logger.info(f"{_CONTINUATION}{line}")
+
+
+def _log_action(summary: str) -> None:
+    logger.info(f"[action]        → {summary}")
+
+
+def _log_all_goals_done(count: int) -> None:
+    logger.info(f"[done] all {count} goals satisfied")
 
 
 def _truncate_attachment_blob(blob: bytes) -> bytes:
@@ -159,11 +199,8 @@ class CognitiveAgent:
         history: list[dict],
         prior_goals: list[Goal],
     ) -> None:
-        logger.info("=" * 50)
-        logger.info("--- cognitive loop ---")
         logger.info(f"Query: {user_query}")
-        logger.info(f"run_id={run_id} | Max iterations: {cap}")
-        logger.info("=" * 50)
+        logger.info(f"run_id={run_id} | max iterations: {cap}")
 
         # Durable-memory classification on raw user text (assignment contract).
         await asyncio.to_thread(
@@ -175,12 +212,12 @@ class CognitiveAgent:
 
         for i in range(cap):
             try:
-                logger.info(f"[Iteration {i + 1}/{cap}]")
+                _log_iter_header(i + 1)
 
                 hits = await asyncio.to_thread(
                     lambda: self.memory.read(user_query, history, top_k=10),
                 )
-                logger.info(f"[memory.read] {len(hits)} ranked hits")
+                logger.debug(f"[memory.read] {len(hits)} ranked hits")
 
                 try:
                     obs = await asyncio.wait_for(
@@ -220,15 +257,13 @@ class CognitiveAgent:
                             ]
                         )
                     prior_goals = list(obs.goals)
+                    _log_perception(obs.goals)
                     continue
                 prior_goals = list(obs.goals)
-
-                for g in obs.goals:
-                    att = f" attach={g.attach_artifact_id}" if g.attach_artifact_id else ""
-                    logger.info(f"  [done={g.done}] {g.text[:120]}{'…' if len(g.text) > 120 else ''}{att}")
+                _log_perception(obs.goals)
 
                 if obs.all_done():
-                    logger.info("All goals done. Concluding...")
+                    _log_all_goals_done(len(obs.goals))
                     ft = _final_text_from_history(history)
                     if ft:
                         _log_final_answer(ft)
@@ -256,7 +291,7 @@ class CognitiveAgent:
                     art_hits = [h for h in hits if h.artifact_id]
                     if art_hits and not goal.attach_artifact_id:
                         goal.attach_artifact_id = art_hits[-1].artifact_id
-                        logger.info(f"[attach] synthesis guard → {goal.attach_artifact_id}")
+                        logger.debug(f"[attach] synthesis guard → {goal.attach_artifact_id}")
 
                 attached: list[tuple[str, bytes]] = []
                 if goal.attach_artifact_id and self.artifacts.exists(goal.attach_artifact_id):
@@ -264,7 +299,7 @@ class CognitiveAgent:
                     if blob:
                         trimmed = _truncate_attachment_blob(blob)
                         attached.append((goal.attach_artifact_id, trimmed))
-                        logger.info(
+                        logger.debug(
                             f"[attach] bytes for {goal.attach_artifact_id} "
                             f"({len(blob)} → {len(trimmed)} bytes for decision)"
                         )
@@ -292,11 +327,13 @@ class CognitiveAgent:
                         goal=goal,
                         user_query=user_query,
                     )
+                    _log_decision_tool(tc)
                     desc, art_id = await self.action.execute(
                         tc,
                         store=self.artifacts,
                         fallback_query=primary_search_query(user_query, goal.text),
                     )
+                    _log_action(summarize_tool_result(tc.name, tc.arguments, desc, art_id))
                     await asyncio.to_thread(
                         lambda: self.memory.record_outcome(
                             tool_call=tc,
@@ -331,13 +368,13 @@ class CognitiveAgent:
                             "text": ans,
                         }
                     )
-                    logger.info("[decision] ANSWER recorded.")
+                    _log_decision_answer(ans)
                     consecutive_errors = 0
 
                     is_last_goal = (obs.next_unfinished() == goal and sum(1 for g in obs.goals if not g.done) == 1)
                     is_synthesis_answer = any(k in goal.text.lower() for k in synth_kw) and len(ans.strip()) > 120
                     if is_last_goal or (i == cap - 1) or is_synthesis_answer:
-                        logger.info("Concluding immediately with final answer...")
+                        _log_all_goals_done(len(obs.goals))
                         _log_final_answer(ans)
                         logger.info("[agent] RUN_COMPLETE reason=all_goals_done")
                         break
@@ -357,12 +394,13 @@ class CognitiveAgent:
                     continue
 
                 tc = enrich_tool_call(tc, goal=goal, user_query=user_query)
-                logger.info(f"-> TOOL_CALL {tc.name} args={tc.arguments!r}")
+                _log_decision_tool(tc)
                 desc, art_id = await self.action.execute(
                     tc,
                     store=self.artifacts,
                     fallback_query=primary_search_query(user_query, goal.text),
                 )
+                _log_action(summarize_tool_result(tc.name, tc.arguments, desc, art_id))
 
                 await asyncio.to_thread(
                     lambda: self.memory.record_outcome(

@@ -78,12 +78,18 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="E-Commerce Price Analysis API", lifespan=lifespan)
 
 # Log sinks: console + UI stream (ANSI colors for browser via ansi_up on /stream-logs)
+# Message body is neutral light gray — level color applies to the level tag only (DEBUG blue is unreadable on dark UI).
 _LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "
-    "<level>{message}</level>"
+    "<fg #e2e8f0>{message}</fg #e2e8f0>"
 )
 logger.remove()
+logger.level("DEBUG", color="<fg #94a3b8>")
+logger.level("INFO", color="<fg #86efac>")
+logger.level("SUCCESS", color="<fg #4ade80>")
+logger.level("WARNING", color="<fg #fbbf24>")
+logger.level("ERROR", color="<fg #fb7185>")
 logger.add(
     sys.stdout,
     format=_LOG_FORMAT,

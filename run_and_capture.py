@@ -31,8 +31,19 @@ def clean_workspace(*, keep_logs: bool = False) -> None:
                 path.unlink()
             except OSError:
                 pass
-    for cache in ROOT.rglob("__pycache__"):
-        shutil.rmtree(cache, ignore_errors=True)
+    skip = {".venv", ".git", "Reference_Code"}
+    for child in ROOT.iterdir():
+        if child.name in skip or not child.is_dir():
+            continue
+        for cache in child.rglob("__pycache__"):
+            shutil.rmtree(cache, ignore_errors=True)
+        for pytest_cache in child.rglob(".pytest_cache"):
+            shutil.rmtree(pytest_cache, ignore_errors=True)
+    for pyc in ROOT.glob("*.pyc"):
+        try:
+            pyc.unlink()
+        except OSError:
+            pass
     print("Workspace cleaned (state/, sandbox/, .crawl4ai/, caches).")
 
 

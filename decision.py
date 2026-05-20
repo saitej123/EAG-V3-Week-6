@@ -14,7 +14,7 @@ from pydantic import ValidationError
 
 from llm_env import gemini_models_ordered, shared_gemini_client
 from schemas import CachedProductRow, DecisionLLMFlat, DecisionOutput, Goal, MemoryItem, PartialSummaryMarkdown, ToolCall
-from search_providers import enrich_tool_call
+from search_providers import SEARCH_PIPELINE_LABEL, enrich_tool_call
 
 
 TOOL_CATALOG = """
@@ -130,7 +130,7 @@ RULES:
    Read attached bytes from ATTACHED ARTIFACT BYTES above.
 3. For extraction / comparison / synthesis goals, ``answer`` must be substantive (several sentences or a concrete list), not meta chatter.
 4. **Parallel Fetching**: For multi-source queries, call `web_search` once, then `fetch_urls` with all target URLs in one list (3 parallel crawlers). Never call `fetch_url` serially when `fetch_urls` can batch them in a single iteration.
-5. **Fast Discovery**: Prefer `web_search` (Tavily + DDG run in parallel, ~5–15s) over `gemini_live_search` (slow). Use `gemini_live_search` only when live INR shopping listings are explicitly required.
+5. **Fast Discovery**: Prefer `web_search` ({SEARCH_PIPELINE_LABEL}). Use `fetch_url`/`fetch_urls` (crawl4ai) for full page content after search.
 6. **Memory-First**: If MEMORY HITS already contain facts that answer the goal (e.g., stored birthdays, preferences), answer immediately without calling tools.
 7. For Indian price-shopping queries, prefer Amazon.in / Flipkart; otherwise follow the goal neutrally.
 8. **Aggressive Convergence & Budget Respect**: Since the maximum iteration budget is extremely tight (max 3 iterations), you must be highly decisive. Do not perform multiple search or fetch queries for the same product or query. If your initial search/fetch yields ambiguous, conflicting, or missing results, synthesize the final response immediately using the best available information, noting the limitations or fallbacks, rather than wasting another iteration on duplicate or repetitive search/fetch calls. You MUST prioritize concluding with a final text `answer` by Iteration 2 or 3 to respect the loop budget!

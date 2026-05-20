@@ -131,6 +131,73 @@ def _log_usage_snapshot(prefix: str = "[Tavily/DDG usage]") -> None:
         logger.warning(f"{prefix} could not read usage.json: {e}")
 
 
+def summarize_tool_result(
+    tool_name: str,
+    arguments: dict[str, Any],
+    text: str,
+    artifact_id: str | None,
+) -> str:
+    """One-line action summary for iteration logs."""
+    tn = (tool_name or "").strip()
+    body = (text or "").strip()
+
+    if tn == "web_search":
+        n = 0
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                parsed = [parsed]
+            if isinstance(parsed, list):
+                n = sum(1 for x in parsed if isinstance(x, dict) and x.get("url"))
+        except json.JSONDecodeError:
+            pass
+        if n == 0:
+            return "search failed (no results)"
+        if artifact_id:
+            return f"[{n} results returned, stored as artifact]"
+        return f"[{n} results returned, descriptors recorded]"
+
+    if tn == "fetch_urls":
+        n = 0
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, list):
+                n = len(parsed)
+        except json.JSONDecodeError:
+            pass
+        if n:
+            return f"[{n} pages fetched]"
+        return body[:100] if body else "fetch completed"
+
+    if tn == "fetch_url":
+        snippet = body
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                snippet = str(parsed.get("text") or body)
+        except json.JSONDecodeError:
+            pass
+        snippet = " ".join(snippet.split())
+        if len(snippet) > 100:
+            snippet = snippet[:97] + "..."
+        if artifact_id and not snippet:
+            return "page fetched, stored as artifact"
+        return snippet or "page fetched"
+
+    if tn == "gemini_live_search":
+        if artifact_id:
+            return "live search summary stored as artifact"
+        preview = " ".join(body.split())
+        return preview[:100] + ("..." if len(preview) > 100 else "")
+
+    if body.lower().startswith("tool ") or "failed" in body.lower()[:80]:
+        return body[:120]
+    if artifact_id:
+        return f"{tn} completed, stored as artifact"
+    preview = " ".join(body.split())
+    return preview[:100] + ("..." if len(preview) > 100 else "") if preview else f"{tn} completed"
+
+
 def _gemini_needs_web_search_fallback(text: str) -> bool:
     t = (text or "").lower()
     return any(
@@ -241,7 +308,7 @@ class ActionActuator:
     def __init__(self):
         mcp_py = _project_venv_python(_PROJECT_ROOT) or sys.executable
         if mcp_py != sys.executable:
-            logger.info(f"[MCP] Using project venv interpreter for subprocess: {mcp_py}")
+            logger.debug(f"[MCP] Using project venv interpreter for subprocess: {mcp_py}")
         self.server_params = StdioServerParameters(
             command=mcp_py,
             args=["mcp_server.py"],
@@ -350,7 +417,7 @@ class ActionActuator:
             except (TypeError, ValueError):
                 tool_args["max_results"] = 5
 
-        logger.info(f"[MCP] --> {tool_name} args={tool_args!r}")
+        logger.debug(f"[MCP] --> {tool_name} args={tool_args!r}")
 
         tool_fail_msg: str | None = None
         conn_fail_msg: str | None = None
@@ -436,7 +503,7 @@ class ActionActuator:
                 logger.warning("[Action] web_search error payload with no query — cannot fallback")
 
         preview = text if len(text) <= 1200 else text[:1200] + "…"
-        logger.info(f"[MCP] <-- {tool_name} result_chars={len(text)} preview={preview!r}")
+        logger.debug(f"[MCP] <-- {tool_name} result_chars={len(text)} preview={preview!r}")
 
         if tool_name == "web_search":
             try:
@@ -447,30 +514,30 @@ class ActionActuator:
                     elif isinstance(parsed.get("results"), list):
                         parsed = parsed["results"]
                 if isinstance(parsed, list):
-                    logger.info(f"[MCP web_search] hits={len(parsed)}")
+                    logger.debug(f"[MCP web_search] hits={len(parsed)}")
                     for i, hit in enumerate(parsed[:5], 1):
                         if isinstance(hit, dict):
-                            logger.info(f"[MCP web_search] #{i} title={hit.get('title','')!r} url={hit.get('url','')!r}")
+                            logger.debug(
+                                f"[MCP web_search] #{i} title={hit.get('title','')!r} url={hit.get('url','')!r}"
+                            )
                     text = json.dumps(parsed, ensure_ascii=False)
-                else:
-                    logger.info("[MCP web_search] response was not JSON list")
             except json.JSONDecodeError:
-                logger.info("[MCP web_search] response was not JSON list")
+                logger.debug("[MCP web_search] response was not JSON list")
             _log_usage_snapshot()
 
         if tool_name == "fetch_urls":
             try:
                 parsed = json.loads(text)
                 if isinstance(parsed, list):
-                    logger.info(f"[MCP fetch_urls] pages={len(parsed)}")
+                    logger.debug(f"[MCP fetch_urls] pages={len(parsed)}")
                     for i, pg in enumerate(parsed[:6], 1):
                         if isinstance(pg, dict):
-                            logger.info(
+                            logger.debug(
                                 f"[MCP fetch_urls] #{i} url={pg.get('url','')!r} "
                                 f"status={pg.get('status')} chars={len(str(pg.get('text','')))}"
                             )
             except json.JSONDecodeError:
-                logger.info("[MCP fetch_urls] response was not JSON list")
+                logger.debug("[MCP fetch_urls] response was not JSON list")
 
         raw = text.encode("utf-8")
         if len(raw) > ARTIFACT_THRESHOLD_BYTES:

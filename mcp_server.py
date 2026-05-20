@@ -5,8 +5,8 @@ Nine tools plus catalog query, stdio transport:
     web_search, fetch_url, fetch_urls (parallel PDP batch), analyze_image_url, query_database, get_time, currency_convert,
     read_file, list_dir, create_file, update_file, edit_file
 
-web_search:  Tavily primary, DuckDuckGo fallback. Hard-capped at 5 results.
-fetch_url:   crawl4ai only — clean markdown via headless Chromium.
+web_search:  Tavily → crawl4ai → Gemini live search → DuckDuckGo. Hard-capped at 5 results.
+fetch_url:   crawl4ai primary — clean markdown via headless Chromium; httpx fallback.
 Usage for tavily and duckduckgo is logged to ./usage.json with monthly
 rollover and a soft cap of 950/1000 on Tavily.
 
@@ -28,12 +28,10 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import httpx
-from duckduckgo_search import DDGS
 from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 MAX_SEARCH_RESULTS = 5  # hard cap — Tavily prices per result
-SEARCH_TIMEOUT_SEC = 18.0
 # Avoid huge JSON-RPC payloads that can drop the MCP stdio connection.
 MAX_FETCH_MARKDOWN_CHARS = 50_000
 # Parallel batch fetch: up to 3 URLs, 3 concurrent browser workers.
@@ -50,7 +48,7 @@ _crawl_io_lock = asyncio.Lock()
 load_dotenv(Path(__file__).parent / ".env")
 
 from llm_env import gemini_api_key, gemini_models_ordered, tavily_api_key
-from search_providers import async_ddg_html, httpx_plain_fetch, merge_search_hits, web_search_with_fallbacks
+from search_providers import httpx_plain_fetch, web_search_with_fallbacks
 
 mcp = FastMCP("eagv3-s6-server")
 
@@ -110,18 +108,6 @@ def _bump(provider: str, field: str = "count") -> None:
 
 def _under_cap(provider: str) -> bool:
     return _load_usage()[provider]["count"] < MONTHLY_CAP
-
-
-def _tavily_search(query: str, max_results: int) -> list[dict]:
-    from search_providers import tavily_search as _tavily
-
-    return _tavily(query, max_results)
-
-
-def _ddg_search(query: str, max_results: int) -> list[dict]:
-    from search_providers import ddg_search as _ddg
-
-    return _ddg(query, max_results)
 
 
 async def _async_tavily(query: str, max_results: int) -> list[dict]:
@@ -251,32 +237,18 @@ async def _crawl4ai_fetch(url: str, max_markdown_chars: int | None = None) -> di
 
 @mcp.tool()
 async def web_search(query: str, max_results: int = 3) -> str:
-    """Search: Tavily + DDG parallel, merge, HTML DDG fallback. Returns JSON array string."""
+    """Search: Tavily → crawl4ai → Gemini live search → DuckDuckGo. Returns JSON array string."""
     max_results = max(1, min(max_results, MAX_SEARCH_RESULTS))
     q = (query or "").strip()
     if not q:
         return json.dumps([{"title": "web_search error", "url": "", "snippet": "Empty query."}])
-    try:
-        tavily_hits, ddg_hits = await asyncio.wait_for(
-            asyncio.gather(_async_tavily(q, max_results), _async_ddg(q, max_results)),
-            timeout=SEARCH_TIMEOUT_SEC,
-        )
-        merged = merge_search_hits(tavily_hits, ddg_hits, max_results=max_results)
-        if merged:
-            return json.dumps(merged, ensure_ascii=False)
-        html_hits = await async_ddg_html(q, max_results)
-        if html_hits:
-            return json.dumps(html_hits, ensure_ascii=False)
-        return json.dumps([
-            {
-                "title": "web_search error",
-                "url": "",
-                "snippet": "No results from Tavily, DuckDuckGo, or HTML fallback.",
-            }
-        ])
-    except Exception:
-        hits = await web_search_with_fallbacks(q, max_results)
-        return json.dumps(hits, ensure_ascii=False)
+    hits = await web_search_with_fallbacks(
+        q,
+        max_results,
+        tavily_fn=_async_tavily,
+        ddg_fn=_async_ddg,
+    )
+    return json.dumps(hits, ensure_ascii=False)
 
 
 @mcp.tool()

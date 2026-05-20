@@ -1,6 +1,7 @@
 """
 Shared web search, fetch fallbacks, and tool-argument enrichment.
 
+Search order: Tavily → crawl4ai → Gemini live search → DuckDuckGo (SEARCH_PIPELINE).
 Used by mcp_server (MCP tools), action.py (direct fallback when MCP fails),
 and agent6/decision (auto-fill empty tool args from user query + goal).
 Never raises — always returns structured dicts/lists the agent can consume.
@@ -12,17 +13,30 @@ import asyncio
 import json
 import re
 from html import unescape
-from typing import Any
+from typing import Any, Awaitable, Callable
 from urllib.parse import quote_plus
 
 import httpx
 from duckduckgo_search import DDGS
 
-from llm_env import tavily_api_key
+from llm_env import (
+    gemini_api_key,
+    gemini_models_ordered,
+    mcp_tool_timeout_seconds,
+    shared_gemini_client,
+    tavily_api_key,
+)
 from schemas import Goal, ToolCall
+
+# Single source of truth for web_search provider order (also used in prompts/docs).
+SEARCH_PIPELINE = ("tavily", "crawl4ai", "gemini_live_search", "duckduckgo")
+SEARCH_PIPELINE_LABEL = "Tavily → crawl4ai → Gemini live search → DuckDuckGo"
+
+SearchProviderFn = Callable[[str, int], Awaitable[list[dict[str, str]]]]
 
 SEARCH_TIMEOUT_SEC = 18.0
 HTTP_FETCH_TIMEOUT_SEC = 20.0
+CRAWL4AI_SEARCH_TIMEOUT_SEC = 25.0
 _HTTP_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
@@ -84,8 +98,26 @@ def ddg_search(query: str, max_results: int) -> list[dict[str, str]]:
     ]
 
 
+def _parse_ddg_html(html: str, max_results: int) -> list[dict[str, str]]:
+    """Extract DDG HTML SERP hits from raw HTML."""
+    out: list[dict[str, str]] = []
+    for block in re.findall(
+        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</',
+        html or "",
+        flags=re.DOTALL | re.IGNORECASE,
+    ):
+        link, title_raw, snippet_raw = block
+        title = unescape(re.sub(r"<[^>]+>", "", title_raw)).strip()
+        snippet = unescape(re.sub(r"<[^>]+>", "", snippet_raw)).strip()
+        if link and title:
+            out.append(_norm_hit(title, link, snippet))
+        if len(out) >= max_results:
+            break
+    return out
+
+
 def ddg_html_fallback(query: str, max_results: int) -> list[dict[str, str]]:
-    """Last-resort HTML scrape when DDGS library returns nothing."""
+    """Last-resort httpx HTML scrape when DDGS library returns nothing."""
     url = f"https://html.duckduckgo.com/html/?q={quote_plus(query)}"
     try:
         with httpx.Client(
@@ -98,21 +130,46 @@ def ddg_html_fallback(query: str, max_results: int) -> list[dict[str, str]]:
             html = r.text
     except Exception:
         return []
+    return _parse_ddg_html(html, max_results)
 
-    out: list[dict[str, str]] = []
-    for block in re.findall(
-        r'class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</',
-        html,
-        flags=re.DOTALL | re.IGNORECASE,
-    ):
-        link, title_raw, snippet_raw = block
-        title = unescape(re.sub(r"<[^>]+>", "", title_raw)).strip()
-        snippet = unescape(re.sub(r"<[^>]+>", "", snippet_raw)).strip()
-        if link and title:
-            out.append(_norm_hit(title, link, snippet))
-        if len(out) >= max_results:
-            break
-    return out
+
+async def async_crawl4ai_search(query: str, max_results: int) -> list[dict[str, str]]:
+    """Crawl DuckDuckGo HTML SERP with crawl4ai — search fallback after Tavily."""
+    q = (query or "").strip()
+    if not q:
+        return []
+    url = f"https://html.duckduckgo.com/html/?q={quote_plus(q)}"
+    try:
+        from crawl4ai import AsyncWebCrawler
+
+        async with AsyncWebCrawler(verbose=False) as crawler:
+            try:
+                from crawl4ai import CrawlerRunConfig
+
+                run_cfg = CrawlerRunConfig(
+                    page_timeout=int(CRAWL4AI_SEARCH_TIMEOUT_SEC * 1000),
+                    wait_until="domcontentloaded",
+                )
+                result = await asyncio.wait_for(
+                    crawler.arun(url=url, config=run_cfg),
+                    timeout=CRAWL4AI_SEARCH_TIMEOUT_SEC + 5,
+                )
+            except (ImportError, TypeError):
+                result = await asyncio.wait_for(
+                    crawler.arun(url=url),
+                    timeout=CRAWL4AI_SEARCH_TIMEOUT_SEC + 5,
+                )
+        html = str(getattr(result, "cleaned_html", None) or getattr(result, "html", None) or "")
+        hits = _parse_ddg_html(html, max_results)
+        if hits:
+            return hits
+        md = getattr(result, "markdown", None)
+        md_text = str(getattr(md, "raw_markdown", None) or getattr(md, "fit_markdown", None) or md or "")
+        if md_text.strip():
+            return [_norm_hit(f"crawl4ai: {q[:80]}", url, md_text[:2000])]
+        return []
+    except Exception:
+        return []
 
 
 def merge_search_hits(
@@ -163,26 +220,130 @@ async def async_ddg_html(query: str, max_results: int) -> list[dict[str, str]]:
         return []
 
 
-async def web_search_with_fallbacks(query: str, max_results: int) -> list[dict[str, str]]:
+def _gemini_text_to_hits(text: str, query: str, max_results: int) -> list[dict[str, str]]:
+    """Turn Gemini grounded prose into web_search-style hit dicts."""
+    body = (text or "").strip()
+    if not body or body.lower().startswith("gemini live search skipped"):
+        return []
+    if "unavailable" in body.lower()[:120] or body.lower().startswith("gemini live search failed"):
+        return []
+
+    hits: list[dict[str, str]] = []
+    for line in body.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if re.match(r"^[-*•]\s+", s) or re.match(r"^\d+[.)]\s+", s):
+            s = re.sub(r"^[-*•]\s+", "", s)
+            s = re.sub(r"^\d+[.)]\s+", "", s)
+            hits.append(_norm_hit(s[:120], "", s))
+        if len(hits) >= max_results:
+            break
+
+    if not hits:
+        hits = [_norm_hit(f"Gemini live search: {query[:80]}", "", body[:4000])]
+    return hits[:max_results]
+
+
+def gemini_live_search_text(query: str) -> str:
+    """Gemini Google Search grounding — used as web_search fallback before DDG."""
+    q = (query or "").strip()
+    if not q:
+        return ""
+    if not gemini_api_key():
+        return ""
+    client = shared_gemini_client()
+    if client is None:
+        return ""
+
+    models = gemini_models_ordered()
+    if not models:
+        return ""
+
+    try:
+        from google.genai import types
+    except ImportError:
+        return ""
+
+    last_err: Exception | None = None
+    for model_id in models:
+        try:
+            response = client.models.generate_content(
+                model=model_id,
+                contents=(
+                    "Use Google Search grounding to answer this query with current web facts:\n"
+                    f"{q}\n\n"
+                    "Return concise bullet points. Mention source or site names when known. "
+                    "Do not invent URLs or facts — if inconclusive, say so briefly."
+                ),
+                config=types.GenerateContentConfig(
+                    tools=[{"google_search": {}}],
+                    temperature=0.1,
+                ),
+            )
+            out = (response.text or "").strip()
+            if out:
+                return out
+        except Exception as e:
+            last_err = e
+    return ""
+
+
+async def async_gemini_live_search(query: str, max_results: int) -> list[dict[str, str]]:
+    try:
+        budget = mcp_tool_timeout_seconds("gemini_live_search")
+        text = await asyncio.wait_for(
+            asyncio.to_thread(gemini_live_search_text, query),
+            timeout=budget,
+        )
+        return _gemini_text_to_hits(text, query, max_results)
+    except Exception:
+        return []
+
+
+async def web_search_with_fallbacks(
+    query: str,
+    max_results: int,
+    *,
+    tavily_fn: SearchProviderFn | None = None,
+    crawl_fn: SearchProviderFn | None = None,
+    gemini_fn: SearchProviderFn | None = None,
+    ddg_fn: SearchProviderFn | None = None,
+    ddg_html_fn: SearchProviderFn | None = None,
+) -> list[dict[str, str]]:
     """
-    Tavily + DDG in parallel, merge/dedupe, then HTML DDG fallback.
-    Never raises.
+    Search pipeline: Tavily → crawl4ai → Gemini live search → DuckDuckGo (library + httpx HTML).
+    Optional provider overrides (e.g. MCP usage tracking for Tavily/DDG). Never raises.
     """
+    tavily = tavily_fn or async_tavily
+    crawl = crawl_fn or async_crawl4ai_search
+    gemini = gemini_fn or async_gemini_live_search
+    ddg = ddg_fn or async_ddg
+    ddg_html = ddg_html_fn or async_ddg_html
+
     q = (query or "").strip()
     if not q:
         return [_norm_hit("web_search error", "", "Empty query.")]
 
     max_results = max(1, min(max_results, 5))
     try:
-        tavily_hits, ddg_hits = await asyncio.gather(
-            async_tavily(q, max_results),
-            async_ddg(q, max_results),
-        )
-        merged = merge_search_hits(tavily_hits, ddg_hits, max_results=max_results)
-        if merged:
-            return merged
+        tavily_hits = await tavily(q, max_results)
+        if tavily_hits:
+            return tavily_hits[:max_results]
 
-        html_hits = await async_ddg_html(q, max_results)
+        crawl_hits = await crawl(q, max_results)
+        if crawl_hits:
+            return crawl_hits[:max_results]
+
+        gemini_hits = await gemini(q, max_results)
+        if gemini_hits:
+            return gemini_hits[:max_results]
+
+        ddg_hits = await ddg(q, max_results)
+        if ddg_hits:
+            return ddg_hits[:max_results]
+
+        html_hits = await ddg_html(q, max_results)
         if html_hits:
             return html_hits
 
@@ -190,7 +351,7 @@ async def web_search_with_fallbacks(query: str, max_results: int) -> list[dict[s
             _norm_hit(
                 "web_search error",
                 "",
-                "No results from Tavily, DuckDuckGo, or HTML fallback. Check network/API keys.",
+                f"No results from {SEARCH_PIPELINE_LABEL}.",
             )
         ]
     except Exception as e:
@@ -261,7 +422,14 @@ def is_search_error_payload(text: str) -> bool:
         return True
     first = items[0] if isinstance(items[0], dict) else {}
     title = str(first.get("title", "")).lower()
-    return title == "web_search error" or not first.get("url")
+    if title == "web_search error":
+        return True
+    if first.get("url"):
+        return False
+    snippet = str(first.get("snippet", "")).strip()
+    if snippet and "no results from" not in snippet.lower():
+        return False
+    return True
 
 
 # --- Tool argument enrichment (was tool_enrichment.py) ------------------------

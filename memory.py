@@ -257,7 +257,7 @@ Content:
                         config=types.GenerateContentConfig(
                             response_mime_type="application/json",
                             response_schema=MemoryClassifyLLM,
-                            temperature=1.0,
+                            temperature=0.2,
                         ),
                     )
                     raw = (response.text or "").strip()

@@ -19,6 +19,7 @@ import asyncio
 import json
 import os
 import sqlite3
+from typing import Any
 os.environ["CRAWL4AI_BASE_DIRECTORY"] = os.path.abspath(os.path.join(os.path.dirname(__file__), ".crawl4ai"))
 
 import threading
@@ -32,16 +33,24 @@ from dotenv import load_dotenv
 from mcp.server.fastmcp import FastMCP
 
 MAX_SEARCH_RESULTS = 5  # hard cap — Tavily prices per result
+SEARCH_TIMEOUT_SEC = 18.0
 # Avoid huge JSON-RPC payloads that can drop the MCP stdio connection.
-MAX_FETCH_MARKDOWN_CHARS = 350_000
-# Parallel batch fetch: smaller per-URL cap × multiple URLs stays under RPC limits.
-MAX_FETCH_URLS_BATCH = 6
+MAX_FETCH_MARKDOWN_CHARS = 50_000
+# Parallel batch fetch: up to 3 URLs, 3 concurrent browser workers.
+MAX_FETCH_URLS_BATCH = 3
 MAX_FETCH_URL_CONCURRENCY = 3
-MAX_FETCH_MARKDOWN_CHARS_BATCH_URL = 120_000
+MAX_FETCH_MARKDOWN_CHARS_BATCH_URL = 40_000
+CRAWLER_POOL_SIZE = 2
+PAGE_TIMEOUT_MS = 25_000
+
+_crawler_pool: asyncio.Queue[Any] | None = None
+_pool_init_lock = asyncio.Lock()
+_crawl_io_lock = asyncio.Lock()
 
 load_dotenv(Path(__file__).parent / ".env")
 
 from llm_env import gemini_api_key, gemini_models_ordered, tavily_api_key
+from search_providers import async_ddg_html, httpx_plain_fetch, merge_search_hits, web_search_with_fallbacks
 
 mcp = FastMCP("eagv3-s6-server")
 
@@ -104,62 +113,105 @@ def _under_cap(provider: str) -> bool:
 
 
 def _tavily_search(query: str, max_results: int) -> list[dict]:
-    from tavily import TavilyClient
+    from search_providers import tavily_search as _tavily
 
-    key = tavily_api_key()
-    if not key:
-        raise ValueError("Tavily credentials are not configured in the environment.")
-    client = TavilyClient(key)
-    # "basic" is much faster than "advanced"; sufficient for PDP discovery links/snippets.
-    resp = client.search(query=query, max_results=max_results, search_depth="basic")
-    return [
-        {
-            "title": r.get("title", ""),
-            "url": r.get("url", ""),
-            "snippet": r.get("content", ""),
-        }
-        for r in resp.get("results", [])
-    ]
+    return _tavily(query, max_results)
 
 
 def _ddg_search(query: str, max_results: int) -> list[dict]:
-    hits: list[dict] = []
-    with DDGS() as ddgs:
-        for backend in ("auto", "html", "lite"):
-            try:
-                hits = list(ddgs.text(query, max_results=max_results, backend=backend))
-            except Exception:
-                hits = []
-            if hits:
-                break
-    return [
-        {
-            "title": h.get("title", ""),
-            "url": h.get("href", ""),
-            "snippet": h.get("body", ""),
-        }
-        for h in hits
-    ]
+    from search_providers import ddg_search as _ddg
+
+    return _ddg(query, max_results)
+
+
+async def _async_tavily(query: str, max_results: int) -> list[dict]:
+    from search_providers import async_tavily as _at
+
+    if not tavily_api_key() or not _under_cap("tavily"):
+        return []
+    results = await _at(query, max_results)
+    if results:
+        _bump("tavily")
+    elif tavily_api_key():
+        _bump("tavily", "errors")
+    return results
+
+
+async def _async_ddg(query: str, max_results: int) -> list[dict]:
+    from search_providers import async_ddg as _ad
+
+    results = await _ad(query, max_results)
+    if results:
+        _bump("duckduckgo")
+    return results
+
+
+async def _init_crawler_pool() -> asyncio.Queue[Any] | None:
+    global _crawler_pool
+    async with _pool_init_lock:
+        if _crawler_pool is not None:
+            return _crawler_pool
+        try:
+            from crawl4ai import AsyncWebCrawler
+
+            pool: asyncio.Queue[Any] = asyncio.Queue(maxsize=CRAWLER_POOL_SIZE)
+            for _ in range(CRAWLER_POOL_SIZE):
+                crawler = AsyncWebCrawler(verbose=False)
+                await crawler.__aenter__()
+                await pool.put(crawler)
+            _crawler_pool = pool
+            return pool
+        except Exception:
+            _crawler_pool = None
+            return None
+
+
+async def _borrow_crawler() -> Any | None:
+    pool = await _init_crawler_pool()
+    if pool is None:
+        return None
+    return await pool.get()
+
+
+async def _return_crawler(crawler: Any | None) -> None:
+    if crawler is not None and _crawler_pool is not None:
+        await _crawler_pool.put(crawler)
+
+
+def _httpx_fetch_fallback(url: str, cap: int, reason: str = "") -> dict:
+    payload = httpx_plain_fetch(url, max_chars=cap)
+    if reason:
+        payload["crawl_fallback_reason"] = reason
+    return payload
 
 
 async def _crawl4ai_fetch(url: str, max_markdown_chars: int | None = None) -> dict:
-    from crawl4ai import AsyncWebCrawler
-
     cap = max_markdown_chars if max_markdown_chars is not None else MAX_FETCH_MARKDOWN_CHARS
+    crawler = await _borrow_crawler()
+    if crawler is None:
+        return _httpx_fetch_fallback(url, cap, reason="crawler_pool_unavailable")
 
     try:
-        # crawl4ai uses Rich which writes via its own captured stdout reference, so
-        # contextlib.redirect_stdout doesn't catch it. Redirect at the file-descriptor
-        # level — crawl4ai's banner / [FETCH] / [SCRAPE] markers would otherwise
-        # corrupt the MCP stdio JSON-RPC stream.
-        saved_fd = os.dup(1)
-        os.dup2(2, 1)
-        try:
-            async with AsyncWebCrawler(verbose=False) as crawler:
-                r = await crawler.arun(url=url)
-        finally:
-            os.dup2(saved_fd, 1)
-            os.close(saved_fd)
+        async with _crawl_io_lock:
+            saved_fd = os.dup(1)
+            os.dup2(2, 1)
+            try:
+                try:
+                    from crawl4ai import CrawlerRunConfig
+
+                    run_cfg = CrawlerRunConfig(page_timeout=PAGE_TIMEOUT_MS, wait_until="domcontentloaded")
+                    r = await asyncio.wait_for(
+                        crawler.arun(url=url, config=run_cfg),
+                        timeout=PAGE_TIMEOUT_MS / 1000 + 10,
+                    )
+                except (ImportError, TypeError):
+                    r = await asyncio.wait_for(
+                        crawler.arun(url=url),
+                        timeout=PAGE_TIMEOUT_MS / 1000 + 10,
+                    )
+            finally:
+                os.dup2(saved_fd, 1)
+                os.close(saved_fd)
         md = r.markdown
         raw = (
             getattr(md, "raw_markdown", None)
@@ -169,7 +221,9 @@ async def _crawl4ai_fetch(url: str, max_markdown_chars: int | None = None) -> di
             or r.html
             or ""
         )
-        text = str(raw)
+        text = str(raw).strip()
+        if not text:
+            return _httpx_fetch_fallback(url, cap, reason="empty_crawl_markdown")
         truncated = False
         if len(text) > cap:
             text = text[:cap]
@@ -187,53 +241,55 @@ async def _crawl4ai_fetch(url: str, max_markdown_chars: int | None = None) -> di
                 "use a narrower fetch or search snippets if you need the tail."
             )
         return payload
+    except asyncio.TimeoutError:
+        return _httpx_fetch_fallback(url, cap, reason="crawl_timeout")
     except Exception as e:
-        return {
-            "status": 0,
-            "content_type": "text/plain",
-            "length_bytes": 0,
-            "text": f"[fetch_url] Crawl4AI failed for {url!r}: {type(e).__name__}: {e}",
-            "error": str(e),
-        }
+        return _httpx_fetch_fallback(url, cap, reason=f"crawl_error:{type(e).__name__}")
+    finally:
+        await _return_crawler(crawler)
 
 
 @mcp.tool()
-def web_search(query: str, max_results: int = 3) -> list[dict]:
-    """Search the web (Tavily primary, DDG fallback). Default 3 hits for speed; max 5. Example: web_search("product India Flipkart", 3)."""
+async def web_search(query: str, max_results: int = 3) -> str:
+    """Search: Tavily + DDG parallel, merge, HTML DDG fallback. Returns JSON array string."""
     max_results = max(1, min(max_results, MAX_SEARCH_RESULTS))
+    q = (query or "").strip()
+    if not q:
+        return json.dumps([{"title": "web_search error", "url": "", "snippet": "Empty query."}])
     try:
-        if tavily_api_key() and _under_cap("tavily"):
-            try:
-                results = _tavily_search(query, max_results)
-                if results:
-                    _bump("tavily")
-                    return results
-            except Exception:
-                _bump("tavily", "errors")
-        results = _ddg_search(query, max_results)
-        _bump("duckduckgo")
-        return results
-    except Exception as e:
-        return [
+        tavily_hits, ddg_hits = await asyncio.wait_for(
+            asyncio.gather(_async_tavily(q, max_results), _async_ddg(q, max_results)),
+            timeout=SEARCH_TIMEOUT_SEC,
+        )
+        merged = merge_search_hits(tavily_hits, ddg_hits, max_results=max_results)
+        if merged:
+            return json.dumps(merged, ensure_ascii=False)
+        html_hits = await async_ddg_html(q, max_results)
+        if html_hits:
+            return json.dumps(html_hits, ensure_ascii=False)
+        return json.dumps([
             {
                 "title": "web_search error",
                 "url": "",
-                "snippet": f"{type(e).__name__}: {e}",
+                "snippet": "No results from Tavily, DuckDuckGo, or HTML fallback.",
             }
-        ]
+        ])
+    except Exception:
+        hits = await web_search_with_fallbacks(q, max_results)
+        return json.dumps(hits, ensure_ascii=False)
 
 
 @mcp.tool()
-async def fetch_url(url: str, timeout: int = 20) -> dict:
-    """Fetch clean markdown from a URL via crawl4ai (headless Chromium). Example: fetch_url("https://example.com")."""
-    return await _crawl4ai_fetch(url)
+async def fetch_url(url: str, timeout: int = 20) -> str:
+    """Fetch clean markdown from a URL via crawl4ai. Returns JSON object string."""
+    return json.dumps(await _crawl4ai_fetch(url), ensure_ascii=False)
 
 
 @mcp.tool()
-async def fetch_urls(urls: list[str]) -> list[dict]:
-    """Fetch multiple PDP URLs in parallel (up to 6 URLs, 3 concurrent browsers). Prefer this over serial fetch_url for price compares."""
+async def fetch_urls(urls: list[str]) -> str:
+    """Fetch up to 3 URLs in parallel via crawl4ai (warm browser pool). Returns JSON array string."""
     if not urls:
-        return []
+        return "[]"
     seen: set[str] = set()
     cleaned: list[str] = []
     for u in urls:
@@ -251,13 +307,29 @@ async def fetch_urls(urls: list[str]) -> list[dict]:
 
     async def _one(target: str) -> dict:
         async with sem:
-            payload = await _crawl4ai_fetch(
-                target, max_markdown_chars=MAX_FETCH_MARKDOWN_CHARS_BATCH_URL
-            )
-            out = {"url": target, **payload}
-            return out
+            try:
+                payload = await _crawl4ai_fetch(
+                    target, max_markdown_chars=MAX_FETCH_MARKDOWN_CHARS_BATCH_URL
+                )
+                return {"url": target, **payload}
+            except Exception as e:
+                fb = _httpx_fetch_fallback(
+                    target, MAX_FETCH_MARKDOWN_CHARS_BATCH_URL, reason=f"fetch_exception:{type(e).__name__}"
+                )
+                return {"url": target, **fb}
 
-    return list(await asyncio.gather(*[_one(u) for u in cleaned]))
+    raw_pages = await asyncio.gather(*[_one(u) for u in cleaned], return_exceptions=True)
+    pages: list[dict] = []
+    for i, item in enumerate(raw_pages):
+        target = cleaned[i]
+        if isinstance(item, Exception):
+            fb = _httpx_fetch_fallback(
+                target, MAX_FETCH_MARKDOWN_CHARS_BATCH_URL, reason=f"gather_exception:{type(item).__name__}"
+            )
+            pages.append({"url": target, **fb})
+        elif isinstance(item, dict):
+            pages.append(item)
+    return json.dumps(pages, ensure_ascii=False)
 
 
 @mcp.tool()

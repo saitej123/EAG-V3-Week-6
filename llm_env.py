@@ -95,8 +95,8 @@ def _int_env(name: str, default: int) -> int:
 
 
 def agent_max_iterations() -> int:
-    """Max perceive→decide→act loops per agent run (default 5). Override with AGENT_MAX_ITERATIONS."""
-    return max(1, min(50, _int_env("AGENT_MAX_ITERATIONS", 5)))
+    """Max perceive→decide→act loops per agent run (default 3). Override with AGENT_MAX_ITERATIONS."""
+    return max(1, min(50, _int_env("AGENT_MAX_ITERATIONS", 3)))
 
 
 def agent_run_max_seconds() -> float:
@@ -106,7 +106,7 @@ def agent_run_max_seconds() -> float:
 
 def agent_llm_step_timeout_seconds() -> float:
     """Perception / decision LLM call budget (each)."""
-    return max(20.0, _float_env("AGENT_LLM_STEP_TIMEOUT_SEC", 120.0))
+    return max(15.0, _float_env("AGENT_LLM_STEP_TIMEOUT_SEC", 60.0))
 
 
 def mcp_tool_timeout_seconds(tool_name: str) -> float:
@@ -115,18 +115,18 @@ def mcp_tool_timeout_seconds(tool_name: str) -> float:
     if os.environ.get(env_key):
         return max(5.0, _float_env(env_key, 120.0))
     defaults: dict[str, float] = {
-        "fetch_urls": 420.0,
-        "fetch_url": 180.0,
-        "web_search": 55.0,
-        "query_database": 35.0,
-        "analyze_image_url": 120.0,
-        "gemini_live_search": 95.0,
-        "get_time": 15.0,
-        "currency_convert": 25.0,
-        "read_file": 20.0,
-        "list_dir": 15.0,
-        "create_file": 20.0,
-        "update_file": 20.0,
-        "edit_file": 20.0,
+        "fetch_urls": 90.0,
+        "fetch_url": 40.0,
+        "web_search": 22.0,
+        "query_database": 10.0,
+        "analyze_image_url": 60.0,
+        "gemini_live_search": 35.0,
+        "get_time": 10.0,
+        "currency_convert": 15.0,
+        "read_file": 15.0,
+        "list_dir": 10.0,
+        "create_file": 15.0,
+        "update_file": 15.0,
+        "edit_file": 15.0,
     }
-    return max(10.0, defaults.get(tool_name, 120.0))
+    return max(8.0, defaults.get(tool_name, 45.0))

@@ -67,6 +67,12 @@ async def lifespan(app: FastAPI):
     _app_loop_holder["loop"] = asyncio.get_running_loop()
     yield
     _app_loop_holder["loop"] = None
+    agent = _cognitive_agent
+    if agent is not None:
+        try:
+            await agent.action.aclose()
+        except Exception:
+            pass
 
 
 app = FastAPI(title="E-Commerce Price Analysis API", lifespan=lifespan)
@@ -182,6 +188,75 @@ async def stream_logs():
         media_type="text/event-stream",
         headers=sse_headers,
     )
+
+
+@app.post("/reset-state")
+async def reset_state():
+    if _run_guard["busy"]:
+        return JSONResponse(
+            {"status": "busy", "detail": "Cannot reset state while an agent run is in progress."},
+            status_code=400,
+        )
+    import shutil
+    state_dir = Path(BASE_DIR / "state")
+    if state_dir.exists():
+        try:
+            shutil.rmtree(state_dir)
+            logger.warning("[UI] State directory cleared successfully.")
+            return {"status": "success", "detail": "Durable state cleared successfully."}
+        except Exception as e:
+            logger.error(f"[UI] Failed to clear state: {e}")
+            return JSONResponse({"status": "error", "detail": f"Failed to clear state: {e}"}, status_code=500)
+    return {"status": "success", "detail": "State directory already empty or non-existent."}
+
+
+@app.get("/get-prompts-and-evals")
+async def get_prompts_and_evals():
+    from validate_prompts_pop import POP_EVAL_KEYS, extract_prompt_template
+    import json
+
+    def _order_pop_eval(raw: dict) -> dict:
+        return {key: raw[key] for key in POP_EVAL_KEYS if key in raw}
+
+    perception_path = BASE_DIR / "perception.py"
+    decision_path = BASE_DIR / "decision.py"
+
+    p_prompt = extract_prompt_template(perception_path)
+    d_prompt = extract_prompt_template(decision_path)
+
+    p_eval = {}
+    p_eval_path = BASE_DIR / "pop/perception_pop_eval.json"
+    if p_eval_path.exists():
+        try:
+            p_eval = _order_pop_eval(json.loads(p_eval_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+
+    d_eval = {}
+    d_eval_path = BASE_DIR / "pop/decision_pop_eval.json"
+    if d_eval_path.exists():
+        try:
+            d_eval = _order_pop_eval(json.loads(d_eval_path.read_text(encoding="utf-8")))
+        except Exception:
+            pass
+
+    return {
+        "perception_prompt": p_prompt,
+        "perception_eval": p_eval,
+        "decision_prompt": d_prompt,
+        "decision_eval": d_eval
+    }
+
+
+@app.post("/run-pop-validation")
+async def run_pop_validation():
+    try:
+        from validate_prompts_pop import async_validate_all_prompts
+        results = await async_validate_all_prompts()
+        return results
+    except Exception as e:
+        logger.error(f"[UI] Prompt of Prompts validation failed: {e}")
+        return JSONResponse({"status": "error", "detail": f"Prompt validation failed: {e}"}, status_code=500)
 
 
 if __name__ == "__main__":

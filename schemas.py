@@ -97,7 +97,7 @@ class DecisionOutput(BaseModel):
 
 
 class DecisionLLMFlat(BaseModel):
-    """Flat JSON for Gemini Developer API.
+    """Flat JSON for Gemini Developer API with explicit reasoning.
 
     Open-ended maps are **JSON strings**, not ``dict`` fields — Pydantic's ``dict`` schemas
     emit ``additionalProperties``, which the Developer API rejects (Enterprise-only).
@@ -105,6 +105,9 @@ class DecisionLLMFlat(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    reasoning: str = Field(
+        description="Step-by-step reasoning explaining the current state, what we learned from history, and why we either call a tool or provide the final answer."
+    )
     branch: Literal["answer", "tool"]
     answer_text: str | None = None
     tool_name: str | None = None
@@ -142,6 +145,10 @@ class PerceptionGoalDraft(BaseModel):
 
 
 class PerceptionLLMResponse(BaseModel):
+    reasoning: str = Field(
+        default="",
+        description="Step-by-step planning and reconciliation reasoning. Explain what has been completed, what needs to happen next, and if any files/artifacts need to be attached."
+    )
     goals: list[PerceptionGoalDraft] = Field(default_factory=list)
 
 

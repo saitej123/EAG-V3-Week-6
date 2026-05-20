@@ -11,8 +11,16 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 from artifact_store import ARTIFACT_THRESHOLD_BYTES, ArtifactStore
-from llm_env import gemini_api_key, gemini_models_ordered, mcp_tool_timeout_seconds, shared_gemini_client
+from llm_env import gemini_api_key, gemini_models_ordered, mcp_tool_timeout_seconds, shared_gemini_client, tavily_api_key
 from schemas import ToolCall
+from search_providers import (
+    derive_search_queries,
+    httpx_plain_fetch,
+    is_search_error_payload,
+    merge_search_hits,
+    primary_search_query,
+    web_search_with_fallbacks,
+)
 
 _PROJECT_ROOT = Path(__file__).resolve().parent
 USAGE_PATH = _PROJECT_ROOT / "usage.json"
@@ -27,8 +35,20 @@ def _project_venv_python(project_root: Path) -> str | None:
     return str(exe) if exe.is_file() else None
 
 
-def _mcp_python_executable() -> str:
-    return _project_venv_python(_PROJECT_ROOT) or sys.executable
+def _mcp_subprocess_env() -> dict[str, str]:
+    """Ensure MCP child inherits API keys and crawl cache paths."""
+    from dotenv import load_dotenv
+
+    load_dotenv(_PROJECT_ROOT / ".env")
+    env = os.environ.copy()
+    env["CRAWL4AI_BASE_DIRECTORY"] = str(_PROJECT_ROOT / ".crawl4ai")
+    for key, val in (
+        ("TAVILY_API_KEY", tavily_api_key()),
+        ("GEMINI_API_KEY", gemini_api_key()),
+    ):
+        if val:
+            env[key] = val
+    return env
 
 
 def _flatten_mcp_error(exc: BaseException) -> str:
@@ -36,6 +56,34 @@ def _flatten_mcp_error(exc: BaseException) -> str:
         parts = [_flatten_mcp_error(e) for e in exc.exceptions]
         return " | ".join(p for p in parts if p)
     return f"{type(exc).__name__}: {exc}"
+
+
+def _normalize_tool_text(tool_name: str, text: str, result: Any) -> str:
+    """Normalize MCP tool output to a JSON string when the SDK returns structured data."""
+    if text and text.strip() and text.strip() not in {
+        "(MCP returned no result.)",
+        "(MCP tool finished with no content blocks.)",
+        "(MCP returned content blocks without text; check server/tool implementation.)",
+    }:
+        return text
+    structured = getattr(result, "structuredContent", None)
+    if structured is not None:
+        try:
+            if tool_name == "web_search" and isinstance(structured, dict):
+                structured = [structured]
+            return json.dumps(structured, ensure_ascii=False)
+        except (TypeError, ValueError):
+            pass
+    if tool_name == "web_search" and text.strip().startswith("{"):
+        try:
+            obj = json.loads(text)
+            if isinstance(obj, dict):
+                return json.dumps([obj], ensure_ascii=False)
+        except json.JSONDecodeError:
+            pass
+    if tool_name == "web_search":
+        return "[]"
+    return text or "(MCP returned empty tool output.)"
 
 
 def _extract_mcp_tool_text(result: Any) -> str:
@@ -83,15 +131,121 @@ def _log_usage_snapshot(prefix: str = "[Tavily/DDG usage]") -> None:
         logger.warning(f"{prefix} could not read usage.json: {e}")
 
 
+def _gemini_needs_web_search_fallback(text: str) -> bool:
+    t = (text or "").lower()
+    return any(
+        phrase in t
+        for phrase in (
+            "timed out",
+            "failed",
+            "unavailable",
+            "not configured",
+            "skipped",
+            "disabled",
+        )
+    )
+
+
+async def _direct_web_search(query: str, max_results: int = 3) -> str:
+    """Bypass MCP when transport fails or returns an error payload."""
+    budget = mcp_tool_timeout_seconds("web_search")
+    try:
+        hits = await asyncio.wait_for(
+            web_search_with_fallbacks(query, max_results),
+            timeout=budget,
+        )
+        return json.dumps(hits, ensure_ascii=False)
+    except Exception as e:
+        return json.dumps([
+            {"title": "web_search error", "url": "", "snippet": f"{type(e).__name__}: {e}"}
+        ])
+
+
+async def _direct_web_search_multi(queries: list[str], max_results: int = 5) -> str:
+    """Try several query variants until one returns real URLs."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for q in queries:
+        s = (q or "").strip()
+        if s and s.lower() not in seen:
+            seen.add(s.lower())
+            ordered.append(s)
+    if not ordered:
+        return json.dumps([{"title": "web_search error", "url": "", "snippet": "Empty query."}])
+
+    budget = mcp_tool_timeout_seconds("web_search")
+    per_query = max(8.0, budget / max(1, len(ordered[:3])))
+    batches: list[list] = []
+    for q in ordered[:3]:
+        try:
+            hits = await asyncio.wait_for(web_search_with_fallbacks(q, max_results), timeout=per_query)
+            if isinstance(hits, list) and any(h.get("url") for h in hits):
+                batches.append(hits)
+        except Exception:
+            continue
+    merged = merge_search_hits(*batches, max_results=max_results) if batches else []
+    if merged:
+        return json.dumps(merged, ensure_ascii=False)
+    return json.dumps([
+        {
+            "title": "web_search error",
+            "url": "",
+            "snippet": "No results after trying alternate search queries.",
+        }
+    ])
+
+
+async def _direct_fetch_url(url: str, max_chars: int = 12_000) -> str:
+    payload = await asyncio.to_thread(httpx_plain_fetch, url, max_chars)
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _direct_fetch_urls(urls: list[str], max_chars: int = 12_000) -> str:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for u in urls:
+        if not isinstance(u, str):
+            continue
+        s = u.strip()
+        if not s or s in seen:
+            continue
+        seen.add(s)
+        cleaned.append(s)
+        if len(cleaned) >= 3:
+            break
+
+    async def _one(target: str) -> dict:
+        raw = await asyncio.to_thread(httpx_plain_fetch, target, max_chars)
+        return {"url": target, **raw}
+
+    pages = await asyncio.gather(*[_one(u) for u in cleaned], return_exceptions=True)
+    out: list[dict] = []
+    for i, item in enumerate(pages):
+        target = cleaned[i]
+        if isinstance(item, Exception):
+            fb = httpx_plain_fetch(target, max_chars)
+            out.append({"url": target, **fb})
+        elif isinstance(item, dict):
+            out.append(item)
+    return json.dumps(out, ensure_ascii=False)
+
+
+def _resolve_search_query(args: dict[str, Any], fallback_query: str) -> str:
+    q = str(args.get("query") or args.get("q") or "").strip()
+    if q:
+        return q
+    return (fallback_query or "").strip()
+
+
 class ActionActuator:
     def __init__(self):
-        mcp_py = _mcp_python_executable()
+        mcp_py = _project_venv_python(_PROJECT_ROOT) or sys.executable
         if mcp_py != sys.executable:
             logger.info(f"[MCP] Using project venv interpreter for subprocess: {mcp_py}")
         self.server_params = StdioServerParameters(
             command=mcp_py,
             args=["mcp_server.py"],
-            env=os.environ.copy(),
+            env=_mcp_subprocess_env(),
             cwd=str(_PROJECT_ROOT),
         )
 
@@ -120,12 +274,21 @@ class ActionActuator:
         if self._mcp_session is not None:
             return self._mcp_session
         self._stdio_cm = stdio_client(self.server_params)
-        read, write = await self._stdio_cm.__aenter__()
-        self._session_cm = ClientSession(read, write)
-        self._mcp_session = await self._session_cm.__aenter__()
-        await self._mcp_session.initialize()
-        logger.info("[MCP] Session initialized (stdio subprocess).")
-        return self._mcp_session
+        try:
+            read, write = await self._stdio_cm.__aenter__()
+            self._session_cm = ClientSession(read, write)
+            self._mcp_session = await self._session_cm.__aenter__()
+            await self._mcp_session.initialize()
+            logger.info("[MCP] Session initialized (stdio subprocess).")
+            return self._mcp_session
+        except Exception:
+            await self._reset_mcp_connection()
+            raise
+
+    async def aclose(self) -> None:
+        """Release MCP stdio transport cleanly (must run before the event loop shuts down)."""
+        async with self._mcp_lock:
+            await self._reset_mcp_connection()
 
     def _pack_descriptor(self, text: str, artifact_id: str | None) -> str:
         if artifact_id:
@@ -133,10 +296,17 @@ class ActionActuator:
             return f"[artifact {artifact_id}, {len(text.encode('utf-8'))} bytes] preview: {prev!r}"
         return text
 
-    async def execute(self, tool_call: ToolCall, *, store: ArtifactStore) -> tuple[str, str | None]:
+    async def execute(
+        self,
+        tool_call: ToolCall,
+        *,
+        store: ArtifactStore,
+        fallback_query: str = "",
+    ) -> tuple[str, str | None]:
         """Session 6 dispatch: returns ``(descriptor_text, optional_artifact_id)``."""
         tool_name = (tool_call.name or "").strip()
         tool_args: dict[str, Any] = dict(tool_call.arguments)
+        fallback_query = (fallback_query or "").strip()
 
         if _args_contain_art_prefix(tool_args):
             msg = (
@@ -147,7 +317,9 @@ class ActionActuator:
             return msg, None
 
         if tool_name == "gemini_live_search":
-            q = tool_args.get("query", "")
+            q = _resolve_search_query(tool_args, fallback_query)
+            if not q and fallback_query:
+                q = fallback_query
             budget = mcp_tool_timeout_seconds("gemini_live_search")
             try:
                 text = await asyncio.wait_for(
@@ -155,16 +327,28 @@ class ActionActuator:
                     timeout=budget,
                 )
             except asyncio.TimeoutError:
-                logger.error(f"[Gemini live search] timed out after {budget}s")
-                text = (
-                    f"Gemini live search timed out after {budget}s. "
-                    "Use web_search or fetch_urls for faster discovery, then fetch PDPs."
-                )
+                logger.error(f"[Gemini live search] timed out after {budget}s — falling back to web_search")
+                text = await _direct_web_search(q)
+            else:
+                if _gemini_needs_web_search_fallback(text):
+                    logger.warning("[Gemini live search] failed/unavailable — falling back to web_search")
+                    text = await _direct_web_search(q)
             raw = text.encode("utf-8")
             if len(raw) > ARTIFACT_THRESHOLD_BYTES:
                 aid = store.put(raw, content_type="text/plain; charset=utf-8", source="gemini_live_search")
                 return self._pack_descriptor(text, aid or None), aid or None
             return text, None
+
+        if tool_name == "web_search":
+            q = _resolve_search_query(tool_args, fallback_query)
+            if not q:
+                q = primary_search_query(fallback_query)
+            if q:
+                tool_args["query"] = q
+            try:
+                tool_args["max_results"] = max(1, min(int(tool_args.get("max_results", 5)), 5))
+            except (TypeError, ValueError):
+                tool_args["max_results"] = 5
 
         logger.info(f"[MCP] --> {tool_name} args={tool_args!r}")
 
@@ -195,7 +379,7 @@ class ActionActuator:
                         tool_fail_msg = f"Tool execution failed: {e}"
                         logger.error(f"[MCP] <-- {tool_name} FAILED: {e}")
                         break
-                    text = _extract_mcp_tool_text(result)
+                    text = _normalize_tool_text(tool_name, _extract_mcp_tool_text(result), result)
                     break
                 except asyncio.CancelledError:
                     raise
@@ -215,10 +399,41 @@ class ActionActuator:
                     "so the MCP child uses this project's `.venv`. Retry the step once the server stays up."
                 )
 
-        if conn_fail_msg:
-            return conn_fail_msg, None
-        if tool_fail_msg:
-            return tool_fail_msg, None
+        if conn_fail_msg or tool_fail_msg:
+            if tool_name == "web_search":
+                q = _resolve_search_query(tool_args, fallback_query)
+                max_r = int(tool_args.get("max_results", 3))
+                queries = derive_search_queries(fallback_query, q, limit=3) if fallback_query else ([q] if q else [])
+                logger.warning(
+                    f"[Action] MCP web_search failed ({conn_fail_msg or tool_fail_msg}) — direct fallback"
+                )
+                text = await _direct_web_search_multi(queries or [q], max_r)
+            elif tool_name == "fetch_url":
+                url = str(tool_args.get("url", "")).strip()
+                logger.warning(
+                    f"[Action] MCP fetch_url failed ({conn_fail_msg or tool_fail_msg}) — httpx fallback"
+                )
+                text = await _direct_fetch_url(url)
+            elif tool_name == "fetch_urls":
+                urls = tool_args.get("urls", [])
+                if isinstance(urls, list):
+                    logger.warning(
+                        f"[Action] MCP fetch_urls failed ({conn_fail_msg or tool_fail_msg}) — httpx fallback"
+                    )
+                    text = await _direct_fetch_urls(urls)
+                else:
+                    return conn_fail_msg or tool_fail_msg or "Tool failed.", None
+            else:
+                return conn_fail_msg or tool_fail_msg or "Tool failed.", None
+        elif tool_name == "web_search" and is_search_error_payload(text):
+            q = _resolve_search_query(tool_args, fallback_query)
+            max_r = int(tool_args.get("max_results", 3))
+            queries = derive_search_queries(fallback_query, q, limit=3) if fallback_query else ([q] if q else [])
+            if queries or q:
+                logger.warning("[Action] MCP web_search error payload — multi-query direct fallback")
+                text = await _direct_web_search_multi(queries or [q], max_r)
+            else:
+                logger.warning("[Action] web_search error payload with no query — cannot fallback")
 
         preview = text if len(text) <= 1200 else text[:1200] + "…"
         logger.info(f"[MCP] <-- {tool_name} result_chars={len(text)} preview={preview!r}")
@@ -226,10 +441,19 @@ class ActionActuator:
         if tool_name == "web_search":
             try:
                 parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    if parsed.get("title") or parsed.get("url"):
+                        parsed = [parsed]
+                    elif isinstance(parsed.get("results"), list):
+                        parsed = parsed["results"]
                 if isinstance(parsed, list):
                     logger.info(f"[MCP web_search] hits={len(parsed)}")
                     for i, hit in enumerate(parsed[:5], 1):
-                        logger.info(f"[MCP web_search] #{i} title={hit.get('title','')!r} url={hit.get('url','')!r}")
+                        if isinstance(hit, dict):
+                            logger.info(f"[MCP web_search] #{i} title={hit.get('title','')!r} url={hit.get('url','')!r}")
+                    text = json.dumps(parsed, ensure_ascii=False)
+                else:
+                    logger.info("[MCP web_search] response was not JSON list")
             except json.JSONDecodeError:
                 logger.info("[MCP web_search] response was not JSON list")
             _log_usage_snapshot()

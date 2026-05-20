@@ -1,0 +1,11 @@
+{
+  "explicit_reasoning": true,
+  "structured_output": true,
+  "tool_separation": true,
+  "conversation_loop": true,
+  "instructional_framing": true,
+  "internal_self_checks": true,
+  "reasoning_type_awareness": true,
+  "fallbacks": true,
+  "overall_clarity": "Excellent prompt that comprehensively addresses all evaluation criteria, including explicit reasoning, structured JSON output, tool separation, conversation loops, self-checks, reasoning tags, and error fallbacks."
+}

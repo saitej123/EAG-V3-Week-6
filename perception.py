@@ -47,7 +47,7 @@ class PerceptionModule:
         hist_txt = json.dumps(history[-16:], indent=2, default=str)[:12000]
 
         prompt = f"""
-You are the Perception module for a Session 6 agent. Maintain an ordered goal list.
+You are the Perception module for a cognitive agent. Maintain an ordered goal list across a multi-turn loop.
 
 USER QUERY:
 {query}
@@ -63,8 +63,33 @@ MEMORY HITS WITH ARTIFACTS (use artifact_index ONLY from this list; integers 0..
 RECENT HISTORY (JSON):
 {hist_txt}
 
+PROMPT-OF-PROMPTS REQUIREMENTS (all must be satisfied in your behaviour):
+
+1. EXPLICIT REASONING — In `reasoning`, think step-by-step before updating goals. Explain what history shows, what changed, and why each goal is or is not done.
+
+2. STRUCTURED OUTPUT — Respond ONLY as JSON matching the schema below. No prose outside JSON. Output must be easy to parse and validate.
+
+3. TOOL SEPARATION — Perception PLANS only; you never call tools. Decision EXECUTES tools. Use `artifact_index` (integer or null) to tell Decision which memory artifact bytes to attach.
+
+4. CONVERSATION LOOP — Each turn receives PRIOR GOALS + RECENT HISTORY. Reconcile `done` flags from new evidence. When prior_goals is non-empty, output the same number of goals in the same order.
+
+5. INSTRUCTIONAL FRAMING — Follow this exact response shape:
+{{
+  "reasoning": "[PLANNING] Step 1: review history. Step 2: update goals.",
+  "goals": [
+    {{"text": "Search and extract source content", "done": false, "artifact_index": null}},
+    {{"text": "Synthesize final answer for the user", "done": false, "artifact_index": null}}
+  ]
+}}
+
+6. INTERNAL SELF-CHECKS — Before marking `done=true`, verify history contains successful outcomes for that step. If a tool failed, keep `done=false`. Sanity-check `artifact_index` is in range or null.
+
+7. REASONING TYPE AWARENESS — Prefix `reasoning` with a tag: [PLANNING], [RECONCILIATION], or [ATTACHMENT_RESOLUTION].
+
+8. ERROR HANDLING & FALLBACKS — If history shows repeated failures, ambiguity, or missing data, adjust goals to include fallbacks (e.g., "Search alternate source" or "Provide partial summary from available facts") instead of stalling.
+
 RULES:
-1. If prior_goals is empty: decompose the query into a short ordered list of imperative goals (each ``text`` one line).
+1. If prior_goals is empty: decompose the query into a highly concise ordered list of imperative goals (ideally **no more than 2 goals**, and at most 3, to respect the tight 3-iteration budget). Group related tasks together (e.g., search and extraction can be a single goal, and final summary the second goal) to ensure the agent converges extremely quickly.
 2. If prior_goals is non-empty: output EXACTLY len(prior_goals) goals in the SAME ORDER.
    Update ``done`` when history shows the step satisfied. Done goals stay done.
 3. For the first unfinished goal, set ``artifact_index`` ONLY when Decision needs fetched bytes now.
@@ -72,7 +97,7 @@ RULES:
 4. Never invent artifact handles as strings — only integer artifact_index or null.
 5. Preserve semantics of each goal; refine ``text`` lightly if needed but do not drop goals.
 
-Respond as JSON matching the schema (goals: list of {{text, done, artifact_index}}).
+Respond as JSON: {{"reasoning": "<tagged step-by-step reasoning>", "goals": [{{"text": "...", "done": false, "artifact_index": null}}]}}
 """
 
         client = shared_gemini_client()
@@ -94,7 +119,7 @@ Respond as JSON matching the schema (goals: list of {{text, done, artifact_index
                             config=types.GenerateContentConfig(
                                 response_mime_type="application/json",
                                 response_schema=PerceptionLLMResponse,
-                                temperature=1.0,
+                                temperature=0.2,
                             ),
                         )
                         raw = (response.text or "").strip()

@@ -6,8 +6,10 @@ A general-purpose cognitive agent that combines **multi-source web synthesis**, 
 
 ## Key Highlights & Extensions
 1. **General-Purpose Capabilities**: Goes far beyond simple e-commerce price-shopping. The agent handles general-purpose tasks such as fetching and analyzing Wikipedia pages, discovering family-friendly activities, fetching weather forecasts, saving calendar appointments, and synthesizing multi-source Python development patterns.
-2. **Parallel Proof-of-Prompt (PoP) Validation**: We have integrated a fully concurrent prompt validator in **`validate_prompts_pop.py`**. When triggered, it analyzes both the Perception and Decision prompts against **`prompt_of_prompts.md`** concurrently using thread pools via `asyncio.gather()`, cutting latency in half!
-3. **Advanced Web UI Tab**: A brand-new **"PoP Validation"** sidebar tab has been added to the web UI. It renders real-time criteria checkmarks (✓/✗) for both prompts and provides one-click combined copy buttons designed to easily paste prompts and evaluations directly into your assignment portal.
+2. **Resilient Search & Fetch**: Shared **`search_providers.py`** implements a unified fallback chain — **Tavily → crawl4ai → Gemini live search → DuckDuckGo** for `web_search`, plus **crawl4ai → httpx** for page fetches. **`action.py`** retries directly when MCP fails; **`agent6.py`** runs emergency synthesis if the iteration budget is exhausted.
+3. **Structured Live Logs**: Each iteration prints a readable trace — `[perception]` goals (`[open]` / `[done]`), `[decision]` `TOOL_CALL` or `ANSWER`, `[action]` one-line result — in both CLI and the Web UI dark console (light-gray message text for readability).
+4. **Parallel Proof-of-Prompt (PoP) Validation**: Integrated prompt validator in **`validate_prompts_pop.py`**. Evaluates Perception and Decision prompts against **`prompt_of_prompts.md`** concurrently via `asyncio.gather()`.
+5. **Advanced Web UI Tab**: **"PoP Validation"** sidebar tab renders real-time criteria checkmarks (✓/✗) and one-click copy buttons for assignment submission.
 
 ---
 
@@ -20,9 +22,10 @@ A general-purpose cognitive agent that combines **multi-source web synthesis**, 
 | **Artifacts** | **`artifact_store.py`** | **`ArtifactStore`** — content-addressable **`art:<sha256-prefix>`** (`.bin` + `.json`); reads legacy **`art:*.txt`**; large MCP results offload above **4 KiB** |
 | **Perception** | **`perception.py`** | **`observe(query, hits, history, prior_goals, run_id) → Observation`** — ordered goals; model emits **`artifact_index`** only (no free-form `art:` handles) |
 | **Decision** | **`decision.py`** | **`next_step(...) → DecisionOutput`** — **`answer`** *or* **`tool_call`** (wire format **`DecisionLLMFlat`** → mapped in code) |
-| **Action** | **`action.py`** | **`execute(ToolCall, store=ArtifactStore) → (descriptor, artifact_id?)`** — MCP **stdio** (`mcp_server.py`); **`gemini_live_search`**; blocks **`art:`** in tool arguments |
-| **Config / timeouts** | **`llm_env.py`** | API keys, model list, **`shared_gemini_client()`**, agent timeouts / iteration cap |
-| **Orchestration** | **`agent6.py`** | **`remember(user_query)`** once, then each iteration: **`read → observe → next_step → execute → record_outcome`**; **`history: list[dict]`** |
+| **Action** | **`action.py`** | **`execute(ToolCall, store, fallback_query=…) → (descriptor, artifact_id?)`** — MCP **stdio**; direct **`search_providers`** fallback when MCP fails; **`gemini_live_search`** for explicit INR shopping checks; blocks **`art:`** in tool arguments |
+| **Search / fetch** | **`search_providers.py`** | **`web_search_with_fallbacks()`** (Tavily → crawl4ai → Gemini → DDG); **`httpx_plain_fetch`**; **`enrich_tool_call()`** auto-fills empty tool args from user query + goal |
+| **Config / timeouts** | **`llm_env.py`** | API keys, model list, **`shared_gemini_client()`**, agent timeouts / iteration cap (default **3** iterations, **60s** LLM step) |
+| **Orchestration** | **`agent6.py`** | **`remember(user_query)`** once, then **`read → observe → next_step → execute → record_outcome`**; structured iteration logs; emergency rescue on max iterations; **`history: list[dict]`** |
 
 **Web UI:** **`app.py`** — FastAPI, **`GET /`**, **`POST /run-agent`**, **`GET /stream-logs`** (SSE). One run at a time → **429** if busy. Successful final answers also emit **`[UI_RESULT_JSON]`** for the markdown result panel in **`templates/index.html`**.
 
@@ -75,14 +78,14 @@ TAVILY_API_KEY=
 # Optional tuning:
 AGENT_MAX_ITERATIONS=3
 AGENT_RUN_MAX_SECONDS=900
-AGENT_LLM_STEP_TIMEOUT_SEC=120
+AGENT_LLM_STEP_TIMEOUT_SEC=60
 ```
 
 - **`GEMINI_MODEL` / `GEMINI_MODELS`**: model IDs; extra comma-separated IDs are **fallbacks** only.
-- **`TAVILY_API_KEY`**: optional; search can fall back to DuckDuckGo when Tavily is unavailable or over cap.
+- **`TAVILY_API_KEY`**: primary search provider; if unavailable or over cap, falls back through crawl4ai → Gemini live search → DuckDuckGo (see **Search & fetch providers** below).
 - **`AGENT_MAX_ITERATIONS`**: max perceive→decide→act loops (default **3**, clamped 1–50).
 - **`AGENT_RUN_MAX_SECONDS`**: wall-clock cap for **`app.py`** agent jobs (default **900**).
-- **`AGENT_LLM_STEP_TIMEOUT_SEC`**: budget for each Perception / Decision LLM call.
+- **`AGENT_LLM_STEP_TIMEOUT_SEC`**: budget for each Perception / Decision LLM call (default **60**).
 
 ---
 
@@ -102,7 +105,30 @@ On startup the loop **always** calls **`memory.remember(..., source="user_query"
 uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
-Open **http://127.0.0.1:8000/** — **Run agent**, watch **Live console**; formatted answers appear in **Agent result** when **`>>> FINAL ANSWER <<<`** / **`[UI_RESULT_JSON]`** are emitted.
+Open **http://127.0.0.1:8000/** — **Run agent**, watch **Live console** (structured iteration trace); formatted answers appear in **Agent result** when **`>>> FINAL ANSWER <<<`** / **`[UI_RESULT_JSON]`** are emitted.
+
+### Batch test runner (all four queries)
+
+```bash
+uv run python run_and_capture.py
+```
+
+Cleans workspace, runs Queries A–D in one process (warm MCP), writes per-query logs under **`logs/`**, and prints a timing summary.
+
+---
+
+## Search & fetch providers (`search_providers.py`)
+
+Single source of truth for external data. Used by **`mcp_server.py`**, **`action.py`** (direct fallback), and **`agent6.py`** (emergency rescue).
+
+| Tool | Provider order |
+|------|----------------|
+| **`web_search`** | **1. Tavily** → **2. crawl4ai** (DDG SERP crawl) → **3. Gemini live search** (Google grounding) → **4. DuckDuckGo** (library + httpx HTML scrape) |
+| **`fetch_url` / `fetch_urls`** | **1. crawl4ai** (warm browser pool in MCP) → **2. httpx** plain fetch |
+
+- Empty `web_search` args are auto-filled from the user query and active goal via **`enrich_tool_call()`**.
+- Tavily/DDG usage is tracked in **`usage.json`** (monthly cap **950** calls on Tavily).
+- MCP verbose traces (`[MCP] -->`, fetch previews) log at **DEBUG**; iteration summary lines log at **INFO**.
 
 ---
 
@@ -117,7 +143,11 @@ Open **http://127.0.0.1:8000/** — **Run agent**, watch **Live console**; forma
 ### Clean slate (assignment / grading)
 
 ```bash
-rm -rf state/
+# Manual
+rm -rf state/ sandbox/ .crawl4ai/ usage.json
+
+# Or use the batch runner helper (also clears __pycache__)
+uv run python -c "from run_and_capture import clean_workspace; clean_workspace()"
 ```
 
 The next run recreates directories as needed.
@@ -126,23 +156,49 @@ The next run recreates directories as needed.
 
 ## Expected console patterns (current code)
 
-Illustrative lines you should see (exact wording varies by model and tools):
+Each iteration is grouped under a header. Example:
+
+```text
+─── iter 1 ───
+[perception]    [open] Find 3 family-friendly things to do in Tokyo
+                [open] Check Saturday's weather in Tokyo
+                [open] Choose the most appropriate activity given the weather
+[decision]      TOOL_CALL: web_search({"query": "family-friendly things to do in Tokyo this weekend"})
+[action]        → [3 results returned, descriptors recorded]
+
+─── iter 2 ───
+[perception]    [done] Find 3 family-friendly things to do in Tokyo
+                [open] Check Saturday's weather in Tokyo
+                ...
+[decision]      TOOL_CALL: fetch_url({"url": "https://wttr.in/Tokyo?format=3&Saturday"})
+[action]        → Saturday forecast: patchy rain, 18C
+
+─── iter 3 ───
+[decision]      ANSWER: Given Saturday's patchy rain forecast, ...
+[done] all 3 goals satisfied
+>>> FINAL ANSWER <<<
+```
+
+Other lines you may see:
 
 - **`[memory.remember]`** — after classification of the raw user query (`kind=`, `keywords=`).
-- **`[Iteration i/N]`** — **`N`** from **`AGENT_MAX_ITERATIONS`** (Web UI uses the same loop).
-- **`[memory.read] K ranked hits`** — keyword-ranked **`MemoryItem`** pool.
-- **`[done=true|false] …`** — goal **`text`** from **`Observation`**; optional **`attach=art:…`**.
-- **`[decision] ANSWER recorded`** — partial answer for the current goal; Perception marks **`done`** on a later iteration using history.
-- **`-> TOOL_CALL …`** then MCP previews — tool execution; **`record_outcome`** writes episodic memory with optional **`artifact_id`** (content-addressable **`art:<sha256-prefix>`** for large payloads).
-- **`>>> FINAL ANSWER <<<`** — when all goals done (last **`answer`** in history) or after **max-iteration** markdown wrap-up.
+- **`Query:`** / **`run_id=`** — once at loop start (**`AGENT_MAX_ITERATIONS`** default **3**).
+- **`[emergency]`** — rescue searches + synthesis when max iterations hit without a user-facing answer.
+- **`>>> FINAL ANSWER <<<`** — all goals done, synthesis answer, or emergency/best-effort wrap-up.
 
-For submissions, **re-run all four queries from a clean `state/`** on your machine and paste **real** terminal transcripts into this README (or an appendix) as required by your instructor.
+For submissions, re-run all four queries from a clean workspace and paste **real** terminal transcripts as required by your instructor. Captured logs below may show an older log format but illustrate successful query outcomes.
 
 ---
 
 ## Four target queries (commands)
 
-Re-run after **`rm -rf state/`** when you need reproducible traces.
+Re-run after cleaning workspace when you need reproducible traces:
+
+```bash
+uv run python -c "from run_and_capture import clean_workspace; clean_workspace()"
+```
+
+Or delete **`state/`** only between Query C Run 1 and Run 2.
 
 ### Query A — Shannon Wikipedia (artifact attach)
 
@@ -190,7 +246,11 @@ Expect: **`web_search`** → fetches per URL (or **`fetch_urls`**) → artifacts
 
 ## MCP server
 
-**`mcp_server.py`** — stdio tools (**`web_search`**, **`fetch_url`**, **`fetch_urls`**, **`query_database`**, **`analyze_image_url`**, sandbox file tools, **`get_time`**, **`currency_convert`**, …). Requires matching **`uv`** deps (**`crawl4ai`**, Tavily/DDG stack as configured).
+**`mcp_server.py`** — stdio tools (**`web_search`**, **`fetch_url`**, **`fetch_urls`**, **`query_database`**, **`analyze_image_url`**, sandbox file tools, **`get_time`**, **`currency_convert`**, …).
+
+- **`web_search`**: delegates to **`search_providers.web_search_with_fallbacks()`** with Tavily/DDG usage tracking.
+- **`fetch_url` / `fetch_urls`**: crawl4ai browser pool (parallel batch up to 3 URLs); httpx fallback on crawl failure.
+- Requires matching **`uv`** deps (**`crawl4ai`**, **`tavily`**, **`duckduckgo-search`**, **`google-genai`**).
 
 ---
 
@@ -199,17 +259,22 @@ Expect: **`web_search`** → fetches per URL (or **`fetch_urls`**) → artifacts
 | Path | Role |
 |------|------|
 | **`schemas.py`** | All boundary Pydantic models |
-| **`agent6.py`** | Cognitive loop |
+| **`agent6.py`** | Cognitive loop + structured logs + emergency rescue |
 | **`memory.py`**, **`artifact_store.py`**, **`perception.py`**, **`decision.py`**, **`action.py`** | Four layers + artifact store |
+| **`search_providers.py`** | Search/fetch fallbacks + tool-arg enrichment |
 | **`mcp_server.py`** | MCP tool implementations |
-| **`app.py`**, **`templates/index.html`** | Web UI + SSE |
+| **`app.py`**, **`templates/index.html`** | Web UI + SSE (readable log colors on dark console) |
 | **`llm_env.py`** | Env-driven LLM client + timeouts |
+| **`run_and_capture.py`** | Batch query runner + workspace cleanup |
+| **`validate_prompts_pop.py`** | PoP prompt validation (parallel) |
 
 ---
 
 ## Real Captured Terminal Logs (Four Required Queries)
 
-Below are the complete, real terminal outputs of the four target queries, captured from a clean state.
+> **Note:** Logs below were captured before the structured `[perception]` / `[decision]` / `[action]` iteration format. Current runs use `─── iter N ───` headers and one-line action summaries. Outcomes and tool usage remain representative.
+
+Below are complete terminal outputs of the four target queries, captured from a clean state.
 
 <details>
 <summary><b>Query A — Shannon Wikipedia (artifact attach)</b></summary>

@@ -68,7 +68,22 @@ PROMPT UNDER EVALUATION:
 {p_prompt}
 \"\"\"
 
-Apply the prompt_of_prompts criteria exactly and output the evaluation JSON.
+Apply the prompt_of_prompts criteria exactly. Respond with JSON ONLY — no markdown fences, no extra keys —
+using exactly these nine fields in this order (same schema as prompt_of_prompts.md lines 44–55):
+
+{{
+  "explicit_reasoning": true,
+  "structured_output": true,
+  "tool_separation": true,
+  "conversation_loop": true,
+  "instructional_framing": true,
+  "internal_self_checks": false,
+  "reasoning_type_awareness": false,
+  "fallbacks": false,
+  "overall_clarity": "One-sentence summary."
+}}
+
+Use boolean true/false for the first eight criteria; overall_clarity must be a string.
 """
     from google.genai import types
 
@@ -133,12 +148,17 @@ async def async_validate_all_prompts() -> dict[str, Any]:
             final_output[name] = {"error": str(res)}
         else:
             final_output[name] = res
-            
+
+    p_eval = final_output.get("Perception", {})
+    d_eval = final_output.get("Decision", {})
+
     return {
         "model_id": model_id,
         "perception_prompt": perception_prompt,
         "decision_prompt": decision_prompt,
-        "evaluations": final_output
+        "perception_eval": p_eval if isinstance(p_eval, dict) else {},
+        "decision_eval": d_eval if isinstance(d_eval, dict) else {},
+        "evaluations": final_output,
     }
 
 def main():

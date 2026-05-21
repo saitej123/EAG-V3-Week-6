@@ -75,15 +75,15 @@ async def lifespan(app: FastAPI):
             pass
 
 
-app = FastAPI(title="E-Commerce Price Analysis API", lifespan=lifespan)
+app = FastAPI(title="Cognitive Agent", lifespan=lifespan)
 
-# Log sinks: console + UI stream (ANSI colors for browser via ansi_up on /stream-logs)
-# Message body is neutral light gray — level color applies to the level tag only (DEBUG blue is unreadable on dark UI).
+# Console: ANSI colors when tty. SSE/UI sink: plain text (no markup) for reliable browser rendering.
 _LOG_FORMAT = (
     "<green>{time:YYYY-MM-DD HH:mm:ss}</green> | "
     "<level>{level: <8}</level> | "
     "<fg #e2e8f0>{message}</fg #e2e8f0>"
 )
+_SSE_LOG_FORMAT = "{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}"
 logger.remove()
 logger.level("DEBUG", color="<fg #94a3b8>")
 logger.level("INFO", color="<fg #86efac>")
@@ -97,8 +97,9 @@ logger.add(
 )
 logger.add(
     QueueSink(),
-    format=_LOG_FORMAT,
-    colorize=True,
+    format=_SSE_LOG_FORMAT,
+    colorize=False,
+    level="INFO",
 )
 
 if not _templates_dir.is_dir():

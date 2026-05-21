@@ -12,7 +12,7 @@ from typing import Any
 from loguru import logger
 from pydantic import ValidationError
 
-from llm_env import gemini_models_ordered, shared_gemini_client
+from llm_env import agent_max_iterations, gemini_models_ordered, shared_gemini_client
 from schemas import CachedProductRow, DecisionLLMFlat, DecisionOutput, Goal, MemoryItem, PartialSummaryMarkdown, ToolCall
 from search_providers import SEARCH_PIPELINE_LABEL, enrich_tool_call
 
@@ -59,6 +59,8 @@ class DecisionModule:
         history: list[dict[str, Any]],
         user_query: str,
         db_rows: list[CachedProductRow],
+        *,
+        iteration_cap: int | None = None,
     ) -> DecisionOutput:
         hits_txt = json.dumps([h.model_dump(mode="json") for h in hits[:24]], indent=2, default=str)[:16000]
         db_txt = json.dumps([r.model_dump() for r in db_rows], indent=2, default=str)[:8000]
@@ -73,6 +75,7 @@ class DecisionModule:
             attached_sections.append(f"==== ATTACHED {aid} ({len(blob)} bytes) ====\n{txt[:12000]}")
         attached_block = "\n\n".join(attached_sections) if attached_sections else "None"
 
+        iter_cap = iteration_cap if iteration_cap is not None else agent_max_iterations()
         prompt = f"""
 You are the Decision module for a cognitive agent. Work toward ONE focused goal using tools or a final answer.
 
@@ -128,12 +131,13 @@ RULES:
 1. Return EITHER a substantive ``answer`` OR a single ``tool_call`` — not both.
 2. Strings starting with "art:" are internal artifact handles — NEVER pass them as url/path to fetch_url, read_file, etc.
    Read attached bytes from ATTACHED ARTIFACT BYTES above.
-3. For extraction / comparison / synthesis goals, ``answer`` must be substantive (several sentences or a concrete list), not meta chatter.
-4. **Parallel Fetching**: For multi-source queries, call `web_search` once, then `fetch_urls` with all target URLs in one list (3 parallel crawlers). Never call `fetch_url` serially when `fetch_urls` can batch them in a single iteration.
-5. **Fast Discovery**: Prefer `web_search` ({SEARCH_PIPELINE_LABEL}). Use `fetch_url`/`fetch_urls` (crawl4ai) for full page content after search.
-6. **Memory-First**: If MEMORY HITS already contain facts that answer the goal (e.g., stored birthdays, preferences), answer immediately without calling tools.
-7. For Indian price-shopping queries, prefer Amazon.in / Flipkart; otherwise follow the goal neutrally.
-8. **Aggressive Convergence & Budget Respect**: Since the maximum iteration budget is extremely tight (max 3 iterations), you must be highly decisive. Do not perform multiple search or fetch queries for the same product or query. If your initial search/fetch yields ambiguous, conflicting, or missing results, synthesize the final response immediately using the best available information, noting the limitations or fallbacks, rather than wasting another iteration on duplicate or repetitive search/fetch calls. You MUST prioritize concluding with a final text `answer` by Iteration 2 or 3 to respect the loop budget!
+3. For extraction / comparison / synthesis goals, ``answer`` must be substantive (several sentences or a concrete numbered list), not meta chatter.
+4. **Multi-source synthesis (e.g. "read the top 3 results", "advice they agree on")**: Call `web_search` once first. Then call `fetch_url` for **exactly one URL per iteration** until the top three pages are fetched (each produces an artifact). Do **NOT** use `fetch_urls` for this pattern. On the synthesis goal, read ATTACHED ARTIFACT bytes and return a short numbered list.
+5. **Parallel fetching (other queries)**: When not doing serial top-3 fetch, you may use `fetch_urls` to batch up to 3 URLs in one iteration.
+6. **Fast Discovery**: Prefer `web_search` ({SEARCH_PIPELINE_LABEL}). Use `fetch_url`/`fetch_urls` (crawl4ai) for full page content after search.
+7. **Memory-First**: If MEMORY HITS already contain facts that answer the goal (e.g., stored birthdays, preferences), answer immediately without calling tools — one iteration is enough for simple recall.
+8. For Indian price-shopping queries, prefer Amazon.in / Flipkart; otherwise follow the goal neutrally.
+9. **Iteration budget ({iter_cap} max)**: Prefer finishing early when the goal is satisfied. Simple recall or single-fact answers need no extra tool rounds. Multi-step queries (search + fetch + synthesis) may use more iterations up to the cap. Do not repeat the same tool with identical args when history shows it already succeeded.
 """
 
         client = shared_gemini_client()

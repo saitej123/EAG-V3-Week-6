@@ -81,6 +81,18 @@
             white-space: pre-wrap;
             color: #e2e8f0;
         }
+        .log-line.log-iter {
+            color: #a5b4fc;
+            font-weight: 600;
+            margin-top: 0.65rem;
+        }
+        .log-line.log-role {
+            color: #f1f5f9;
+        }
+        .log-line[data-level="success"] { color: #86efac; }
+        .log-line[data-level="warning"] { color: #fbbf24; }
+        .log-line[data-level="error"] { color: #fb7185; }
+        .log-line[data-level="debug"] { color: #94a3b8; }
         /* Loguru/ANSI blue is illegible on the dark console — force readable slate/cyan */
         .log-scroll .log-line span[style*="color:blue"],
         .log-scroll .log-line span[style*="color: blue"],
@@ -98,19 +110,18 @@
             border: 2px solid transparent;
             background-clip: padding-box;
         }
-        .pill-store {
-            transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
-        }
-        .pill-store:hover {
-            transform: translateY(-1px);
-            box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-        }
-        .pill-store:focus-visible {
-            outline: 2px solid rgb(15 23 42);
-            outline-offset: 2px;
-        }
         .logo-ring {
             box-shadow: 0 0 0 1px rgba(255,255,255,0.08), 0 12px 30px rgba(15, 23, 42, 0.25);
+        }
+        .role-list li {
+            display: flex;
+            gap: 0.5rem;
+            align-items: flex-start;
+        }
+        .role-list .role-name {
+            flex-shrink: 0;
+            font-weight: 650;
+            color: #334155;
         }
         .example-chip {
             text-align: left;
@@ -142,6 +153,9 @@
             border-left-style: solid;
             text-align: left;
             width: 100%;
+        }
+        .sidebar-examples-scroll {
+            max-height: min(52vh, 440px);
         }
         @media (min-width: 1024px) {
             .sidebar-examples-scroll {
@@ -238,7 +252,7 @@
 <body class="min-h-screen text-slate-900 antialiased">
 
 <div class="mx-auto flex max-w-[1600px] flex-col gap-6 px-4 py-10 pb-12 lg:flex-row lg:items-start lg:gap-8 xl:gap-10">
-    <aside class="w-full lg:w-[300px] lg:shrink-0">
+    <aside id="sidebarAside" class="w-full lg:w-[300px] lg:shrink-0">
         <div class="card-elevated overflow-hidden rounded-2xl bg-white">
             <div class="p-5 border-b border-slate-200/90 bg-slate-50/40">
                 <div class="flex items-center gap-3">
@@ -252,7 +266,7 @@
                         <h1 class="text-base font-extrabold tracking-tight text-slate-900 leading-tight">Cognitive Agent</h1>
                     </div>
                 </div>
-                <p class="mt-3 text-xs leading-relaxed text-slate-500">Four-role cognitive loop (Memory, Perception, Decision, Action). Solves complex workflows, crawls web articles, organizes calendar facts, and compares information.</p>
+                <p class="mt-3 text-xs leading-relaxed text-slate-500">A four-part cognitive loop — <span class="font-semibold text-slate-700">Memory</span>, <span class="font-semibold text-slate-700">Perception</span>, <span class="font-semibold text-slate-700">Decision</span>, and <span class="font-semibold text-slate-700">Action</span> — working together until your question is answered.</p>
             </div>
 
             <div id="sidebarTablist" class="flex flex-col divide-y divide-slate-200/90 border-b border-slate-200/90" role="tablist" aria-label="Sidebar sections">
@@ -262,9 +276,6 @@
                 <button type="button" id="tabExamplesBtn" role="tab" aria-selected="false" aria-controls="panelExamples" class="sidebar-tab-btn tab-trigger flex flex-wrap items-center gap-x-2 gap-y-1 border-l-transparent px-3 py-3 text-xs font-semibold leading-snug text-slate-500 transition hover:bg-slate-50/80 hover:text-slate-700 sm:text-[13px]">
                     <span>Examples</span>
                     <span id="examplesCountBadge" class="rounded-md bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium leading-none text-slate-600 tabular-nums"></span>
-                </button>
-                <button type="button" id="tabStoresBtn" role="tab" aria-selected="false" aria-controls="panelStores" class="sidebar-tab-btn tab-trigger border-l-transparent px-3 py-3 text-xs font-semibold leading-snug text-slate-500 transition hover:bg-slate-50/80 hover:text-slate-700 sm:text-[13px]">
-                    Stores
                 </button>
                 <button type="button" id="tabTestCasesBtn" role="tab" aria-selected="false" aria-controls="panelTestCases" class="sidebar-tab-btn tab-trigger flex flex-wrap items-center gap-x-2 gap-y-1 border-l-transparent px-3 py-3 text-xs font-semibold leading-snug text-slate-500 transition hover:bg-slate-50/80 hover:text-slate-700 sm:text-[13px]">
                     <span>Test Cases</span>
@@ -279,12 +290,20 @@
             <div id="panelOverview" role="tabpanel" aria-labelledby="tabOverviewBtn" class="space-y-4 p-5">
                 <div>
                     <h2 class="text-sm font-semibold text-slate-900">Log connection</h2>
-                    <p class="mt-1 text-[11px] leading-snug text-slate-500">Browser ↔ server stream for live traces.</p>
+                    <p class="mt-1 text-[11px] leading-snug text-slate-500">Shows whether live agent logs are streaming to this page.</p>
                     <p id="streamStatus" class="mt-3 inline-flex w-full items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-medium text-slate-600">
                         <span id="streamDot" class="h-2 w-2 shrink-0 animate-pulse rounded-full bg-amber-400"></span>
                         <span id="streamLabel">Connecting…</span>
                     </p>
-                    <p class="mt-3 text-[11px] leading-relaxed text-slate-500">One agent run at a time — wait for completion before starting another.</p>
+                </div>
+                <div class="rounded-xl border border-slate-200 bg-slate-50/80 p-3">
+                    <h3 class="text-[11px] font-bold uppercase tracking-wide text-slate-500">How it works</h3>
+                    <ul class="role-list mt-2 space-y-2 text-[11px] leading-snug text-slate-600">
+                        <li><span class="role-name">Memory</span><span>Remembers facts you share and recalls them in later runs.</span></li>
+                        <li><span class="role-name">Perception</span><span>Turns your intent into a goal list and tracks what is done.</span></li>
+                        <li><span class="role-name">Decision</span><span>Chooses the next web search, fetch, file tool, or final answer.</span></li>
+                        <li><span class="role-name">Action</span><span>Runs that choice and returns results to the loop.</span></li>
+                    </ul>
                 </div>
             </div>
 
@@ -293,43 +312,27 @@
                 <div id="sidebarExampleGrid" class="sidebar-examples-scroll mt-3 flex flex-col gap-2 overflow-y-auto pb-1 scrollbar-thin pr-0.5" role="group" aria-label="Additional example prompts"></div>
             </div>
 
-            <div id="panelStores" role="tabpanel" aria-labelledby="tabStoresBtn" class="hidden p-4">
-                <p class="text-xs leading-snug text-slate-500">Indian retailers — opens in a new tab.</p>
-                <div class="sidebar-examples-scroll mt-3 flex flex-wrap gap-2 overflow-y-auto pb-1 scrollbar-thin pr-0.5" role="group" aria-label="Marketplace shortcuts">
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.flipkart.com" target="_blank" rel="noopener noreferrer">Flipkart</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.amazon.in" target="_blank" rel="noopener noreferrer">Amazon.in</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.myntra.com" target="_blank" rel="noopener noreferrer">Myntra</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.ajio.com" target="_blank" rel="noopener noreferrer">Ajio</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.nykaa.com" target="_blank" rel="noopener noreferrer">Nykaa</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.meesho.com" target="_blank" rel="noopener noreferrer">Meesho</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.tatacliq.com" target="_blank" rel="noopener noreferrer">Tata CLiQ</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.croma.com" target="_blank" rel="noopener noreferrer">Croma</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.reliancedigital.in" target="_blank" rel="noopener noreferrer">Reliance Digital</a>
-                    <a class="pill-store inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border border-slate-200/90 bg-white px-3 py-1 text-xs font-semibold text-slate-700" href="https://www.snapdeal.com" target="_blank" rel="noopener noreferrer">Snapdeal</a>
-                </div>
-            </div>
-
             <div id="panelTestCases" role="tabpanel" aria-labelledby="tabTestCasesBtn" class="hidden p-4 space-y-4">
-                <p class="text-xs leading-snug text-slate-500">Run the four required target queries from the assignment. Press to load and run directly.</p>
+                <p class="text-xs leading-snug text-slate-500">Four assignment scenarios — research, planning, remembered facts, and cross-site synthesis. Tap any card to load and run.</p>
                 
                 <div class="sidebar-examples-scroll flex flex-col gap-3 overflow-y-auto pb-1 scrollbar-thin pr-0.5">
                     <!-- Query A -->
                     <button type="button" class="test-case-btn border border-slate-200 bg-white hover:bg-slate-50/80 rounded-xl p-3 text-left transition focus:ring-2 focus:ring-slate-900/10 outline-none w-full" data-query="Fetch https://en.wikipedia.org/wiki/Claude_Shannon and tell me his birth date, death date, and three key contributions to information theory.">
                         <span class="block text-xs font-bold text-slate-900">Query A: Shannon Wikipedia</span>
-                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Tests artifact attachment of raw Wikipedia content.</span>
+                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Reads a full Wikipedia page and extracts key facts without re-fetching.</span>
                     </button>
 
                     <!-- Query B -->
                     <button type="button" class="test-case-btn border border-slate-200 bg-white hover:bg-slate-50/80 rounded-xl p-3 text-left transition focus:ring-2 focus:ring-slate-900/10 outline-none w-full" data-query="Find 3 family-friendly things to do in Tokyo this weekend. Check Saturday's weather forecast there and tell me which one is most appropriate.">
                         <span class="block text-xs font-bold text-slate-900">Query B: Tokyo Activities</span>
-                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Tests multi-goal plan and weather/activity memory carryover.</span>
+                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Finds activities, checks the forecast, and picks the best fit.</span>
                     </button>
 
                     <!-- Query C -->
                     <div class="border border-slate-200 rounded-xl bg-white overflow-hidden divide-y divide-slate-100 w-full">
                         <div class="p-3 bg-slate-50/50">
                             <span class="block text-xs font-bold text-slate-900">Query C: Mom's Birthday</span>
-                            <span class="block mt-0.5 text-[10px] text-slate-500">Tests durable state/memory.json persistence across run boundaries.</span>
+                            <span class="block mt-0.5 text-[10px] text-slate-500">Saves a birthday and reminders, then recalls them in a later run.</span>
                         </div>
                         <button type="button" class="test-case-btn w-full hover:bg-slate-50/80 p-3 text-left transition outline-none block" data-query="My mom's birthday is 15 May 2026. Remember that and give me a calendar reminder for two weeks before and on the day.">
                             <span class="block text-[11px] font-semibold text-slate-800">Run 1: Save facts</span>
@@ -344,7 +347,7 @@
                     <!-- Query D -->
                     <button type="button" class="test-case-btn border border-slate-200 bg-white hover:bg-slate-50/80 rounded-xl p-3 text-left transition focus:ring-2 focus:ring-slate-900/10 outline-none w-full" data-query="Search for 'Python asyncio best practices', read the top 3 results, and give me a short numbered list of the advice they agree on.">
                         <span class="block text-xs font-bold text-slate-900">Query D: Asyncio Synthesis</span>
-                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Tests multi-source synthesis with force-attach.</span>
+                        <span class="block mt-1 text-[10px] leading-snug text-slate-500">Searches several sources and summarizes the advice they share.</span>
                     </button>
 
                     <!-- Reset State -->
@@ -354,91 +357,16 @@
                 </div>
             </div>
 
-            <div id="panelPop" role="tabpanel" aria-labelledby="tabPopBtn" class="hidden p-4 space-y-4">
-                <p class="text-xs leading-snug text-slate-500">Analyze and validate Perception & Decision prompts against prompt_of_prompts.md concurrently.</p>
-                
-                <button type="button" id="btnRunPopValidation" class="w-full text-center border border-indigo-200 hover:bg-indigo-50 text-indigo-700 bg-white hover:border-indigo-300 rounded-xl py-2.5 text-xs font-bold transition outline-none flex items-center justify-center gap-1.5 shadow-sm">
-                    <span id="popValidationSpinner" class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent"></span>
-                    <span id="popValidationLabel">⚡ Re-Evaluate Prompts</span>
-                </button>
-
-                <div class="sidebar-examples-scroll flex flex-col gap-4 overflow-y-auto pb-1 scrollbar-thin pr-0.5" style="max-height: calc(100vh - 270px);">
-                    <!-- Perception Section -->
-                    <div class="border border-slate-200 rounded-xl bg-white overflow-hidden divide-y divide-slate-100">
-                        <div class="p-3 bg-slate-50/50 flex items-center justify-between">
-                            <span class="block text-xs font-bold text-slate-900">1. Perception Prompt</span>
-                            <button type="button" id="btnCopyPerceptionCombined" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition outline-none">📋 Copy submission</button>
-                        </div>
-                        <div class="p-3">
-                            <details class="group">
-                                <summary class="flex items-center justify-between cursor-pointer list-none">
-                                    <span class="text-[11px] font-medium text-slate-600 group-open:text-slate-900">View prompt template</span>
-                                    <span class="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-                                </summary>
-                                <pre id="txtPerceptionPrompt" class="mt-2 p-2 bg-slate-50 rounded-lg text-[10px] text-slate-700 overflow-x-auto whitespace-pre-wrap font-mono border border-slate-100 max-h-36 overflow-y-auto"></pre>
-                            </details>
-                        </div>
-                        <div class="p-3 space-y-2">
-                            <span class="block text-[11px] font-bold text-slate-800">PoP Evaluation:</span>
-                            <div id="popEvalPerceptionChecklist" class="space-y-1.5 text-[11px] text-slate-600">
-                                <!-- Dynamically filled -->
-                            </div>
-                            <div class="mt-2 pt-2 border-t border-slate-100 text-[10px] leading-relaxed text-slate-500 italic" id="popEvalPerceptionClarity">
-                                <!-- Overall clarity -->
-                            </div>
-                            <details class="group mt-2">
-                                <summary class="flex items-center justify-between cursor-pointer list-none">
-                                    <span class="text-[10px] font-medium text-slate-500 group-open:text-slate-900">View evaluation JSON</span>
-                                    <span class="text-[9px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-                                </summary>
-                                <pre id="txtPerceptionEvalJson" class="mt-2 p-2 bg-slate-50 rounded-lg text-[9px] text-slate-600 overflow-x-auto font-mono border border-slate-100 max-h-32 overflow-y-auto"></pre>
-                            </details>
-                        </div>
-                    </div>
-
-                    <!-- Decision Section -->
-                    <div class="border border-slate-200 rounded-xl bg-white overflow-hidden divide-y divide-slate-100">
-                        <div class="p-3 bg-slate-50/50 flex items-center justify-between">
-                            <span class="block text-xs font-bold text-slate-900">2. Decision Prompt</span>
-                            <button type="button" id="btnCopyDecisionCombined" class="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 transition outline-none">📋 Copy submission</button>
-                        </div>
-                        <div class="p-3">
-                            <details class="group">
-                                <summary class="flex items-center justify-between cursor-pointer list-none">
-                                    <span class="text-[11px] font-medium text-slate-600 group-open:text-slate-900">View prompt template</span>
-                                    <span class="text-[10px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-                                </summary>
-                                <pre id="txtDecisionPrompt" class="mt-2 p-2 bg-slate-50 rounded-lg text-[10px] text-slate-700 overflow-x-auto whitespace-pre-wrap font-mono border border-slate-100 max-h-36 overflow-y-auto"></pre>
-                            </details>
-                        </div>
-                        <div class="p-3 space-y-2">
-                            <span class="block text-[11px] font-bold text-slate-800">PoP Evaluation:</span>
-                            <div id="popEvalDecisionChecklist" class="space-y-1.5 text-[11px] text-slate-600">
-                                <!-- Dynamically filled -->
-                            </div>
-                            <div class="mt-2 pt-2 border-t border-slate-100 text-[10px] leading-relaxed text-slate-500 italic" id="popEvalDecisionClarity">
-                                <!-- Overall clarity -->
-                            </div>
-                            <details class="group mt-2">
-                                <summary class="flex items-center justify-between cursor-pointer list-none">
-                                    <span class="text-[10px] font-medium text-slate-500 group-open:text-slate-900">View evaluation JSON</span>
-                                    <span class="text-[9px] text-slate-400 group-open:rotate-180 transition-transform">▼</span>
-                                </summary>
-                                <pre id="txtDecisionEvalJson" class="mt-2 p-2 bg-slate-50 rounded-lg text-[9px] text-slate-600 overflow-x-auto font-mono border border-slate-100 max-h-32 overflow-y-auto"></pre>
-                            </details>
-                        </div>
-                    </div>
-                </div>
-            </div>
+            <div id="panelPop" role="tabpanel" aria-labelledby="tabPopBtn" class="hidden" aria-hidden="true"></div>
         </div>
     </aside>
 
     <main class="layout-main min-w-0 flex-1">
-        <div class="card-elevated rounded-2xl bg-white p-6 sm:p-7">
+        <div id="intentCard" class="card-elevated rounded-2xl bg-white p-6 sm:p-7">
             <div class="flex flex-wrap items-start justify-between gap-3">
                 <div>
                     <label for="query" class="text-sm font-semibold text-slate-800">Intent</label>
-                    <p class="mt-1 max-w-2xl text-xs text-slate-500">Describe what you want in plain English, paste product URLs, or load an example — then edit before running.</p>
+                    <p class="mt-1 max-w-2xl text-xs text-slate-500">Describe what you need, then run. The agent cycles through <span class="font-medium text-slate-700">Memory → Perception → Decision → Action</span> until it can answer.</p>
                 </div>
                 <span class="hidden rounded-lg border border-slate-200 bg-slate-50 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-slate-500 sm:inline">Ctrl+Enter run</span>
             </div>
@@ -448,7 +376,7 @@
             <div class="mt-4">
                 <p class="text-[11px] font-semibold uppercase tracking-wide text-slate-400">Quick examples</p>
                 <div id="featuredExamplesRow" class="mt-2 flex flex-wrap gap-2" role="group" aria-label="Featured example prompts"></div>
-                <p class="mt-2 text-[11px] text-slate-400"><span class="text-slate-500">More presets:</span> sidebar <span class="font-semibold text-slate-600">Examples</span> tab. Retailer shortcuts: <span class="font-semibold text-slate-600">Stores</span> tab.</p>
+                <p class="mt-2 text-[11px] text-slate-400"><span class="text-slate-500">More presets:</span> sidebar <span class="font-semibold text-slate-600">Examples</span> tab · assignment queries in <span class="font-semibold text-slate-600">Test Cases</span>.</p>
             </div>
 
             <div id="formHint" class="mt-4 min-h-[1.25rem] text-xs text-amber-700" role="status" aria-live="polite"></div>
@@ -467,11 +395,40 @@
             <p class="mt-3 text-[11px] text-slate-400 sm:hidden">Tip: use Ctrl+Enter in the box to run.</p>
         </div>
 
+        <section id="popSubmissionPanel" class="card-elevated hidden scroll-mt-6 space-y-6 rounded-2xl bg-white p-6 sm:p-7">
+            <div class="flex flex-wrap items-center justify-between gap-3">
+                <button type="button" id="btnPopBack" class="rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600 transition hover:bg-slate-50">
+                    ← Back to agent
+                </button>
+                <button type="button" id="btnRunPopValidation" class="inline-flex items-center justify-center gap-1.5 rounded-xl border border-indigo-200 bg-white px-4 py-2 text-xs font-bold text-indigo-700 shadow-sm transition hover:border-indigo-300 hover:bg-indigo-50">
+                    <span id="popValidationSpinner" class="hidden h-3.5 w-3.5 animate-spin rounded-full border-2 border-indigo-600 border-t-transparent"></span>
+                    <span id="popValidationLabel">⚡ Re-Evaluate Prompts</span>
+                </button>
+            </div>
+            <p id="popStatusMessage" class="hidden min-h-[1.25rem] text-xs text-slate-600" role="status" aria-live="polite"></p>
+
+            <div class="space-y-2">
+                <label for="popSubmissionPerception" class="block text-sm font-semibold text-slate-900">Paste Perception's Prompt along with PoP's Validation JSON</label>
+                <textarea id="popSubmissionPerception" readonly rows="16" class="min-h-[16rem] w-full resize-y rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 font-mono text-[11px] leading-relaxed text-slate-800 shadow-inner outline-none" placeholder="Click Re-Evaluate Prompts — prompt and JSON will appear here."></textarea>
+                <div class="flex justify-end">
+                    <button type="button" id="btnCopyPopSubmissionPerception" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition hover:bg-indigo-50">Copy perception answer</button>
+                </div>
+            </div>
+
+            <div class="space-y-2">
+                <label for="popSubmissionDecision" class="block text-sm font-semibold text-slate-900">Paste Decision's Prompt along with PoP's Validation JSON</label>
+                <textarea id="popSubmissionDecision" readonly rows="16" class="min-h-[16rem] w-full resize-y rounded-xl border border-slate-200 bg-slate-50/80 px-4 py-3 font-mono text-[11px] leading-relaxed text-slate-800 shadow-inner outline-none" placeholder="Click Re-Evaluate Prompts — prompt and JSON will appear here."></textarea>
+                <div class="flex justify-end">
+                    <button type="button" id="btnCopyPopSubmissionDecision" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-indigo-700 transition hover:bg-indigo-50">Copy decision answer</button>
+                </div>
+            </div>
+        </section>
+
         <section id="resultPanel" class="card-elevated hidden scroll-mt-6 rounded-2xl border border-emerald-200/90 bg-gradient-to-b from-emerald-50/95 via-white to-white p-6 shadow-sm" aria-labelledby="resultHeading">
             <div class="flex flex-wrap items-start justify-between gap-3 border-b border-emerald-100/90 pb-3">
                 <div>
                     <h2 id="resultHeading" class="text-sm font-semibold text-emerald-950">Agent result</h2>
-                    <p class="mt-0.5 max-w-xl text-[11px] leading-snug text-emerald-900/65">Session&nbsp;6 cognitive loop — markdown answer from <code class="rounded bg-emerald-100/80 px-1 py-0.5 text-[10px] text-emerald-950">FINAL ANSWER</code> / <code class="rounded bg-emerald-100/80 px-1 py-0.5 text-[10px] text-emerald-950">UI_RESULT_JSON</code>. Full trace in the console.</p>
+                    <p class="mt-0.5 max-w-xl text-[11px] leading-snug text-emerald-900/65">The Decision module’s final answer. Perception, Decision, and Action steps appear in the console below.</p>
                 </div>
                 <button type="button" id="resultPanelClose" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-600 shadow-sm transition hover:bg-slate-50">
                     Hide result
@@ -484,7 +441,7 @@
             <div class="mb-4 flex flex-wrap items-end justify-between gap-3">
                 <div>
                     <h2 class="text-sm font-semibold text-slate-900">Live console</h2>
-                    <p class="mt-0.5 text-xs text-slate-500">Agent trace • auto‑scroll • read‑only</p>
+                    <p class="mt-0.5 text-xs text-slate-500"><span class="font-medium text-slate-700">[perception]</span> goals · <span class="font-medium text-slate-700">[decision]</span> tool or answer · <span class="font-medium text-slate-700">[action]</span> results · <span class="font-medium text-slate-700">[memory]</span> recall</p>
                 </div>
                 <div class="flex flex-wrap items-center gap-2">
                     <button type="button" id="consoleCollapseBtn" class="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50" aria-expanded="true" aria-controls="consoleTerminal">
@@ -522,29 +479,25 @@
     const streamLabel = document.getElementById('streamLabel');
     const tabOverviewBtn = document.getElementById('tabOverviewBtn');
     const tabExamplesBtn = document.getElementById('tabExamplesBtn');
-    const tabStoresBtn = document.getElementById('tabStoresBtn');
     const tabTestCasesBtn = document.getElementById('tabTestCasesBtn');
     const tabPopBtn = document.getElementById('tabPopBtn');
     const panelOverview = document.getElementById('panelOverview');
     const panelExamples = document.getElementById('panelExamples');
-    const panelStores = document.getElementById('panelStores');
     const panelTestCases = document.getElementById('panelTestCases');
     const panelPop = document.getElementById('panelPop');
 
     const btnRunPopValidation = document.getElementById('btnRunPopValidation');
+    const btnPopBack = document.getElementById('btnPopBack');
+    const sidebarAside = document.getElementById('sidebarAside');
     const popValidationSpinner = document.getElementById('popValidationSpinner');
     const popValidationLabel = document.getElementById('popValidationLabel');
-    const txtPerceptionPrompt = document.getElementById('txtPerceptionPrompt');
-    const txtPerceptionEvalJson = document.getElementById('txtPerceptionEvalJson');
-    const txtDecisionPrompt = document.getElementById('txtDecisionPrompt');
-    const txtDecisionEvalJson = document.getElementById('txtDecisionEvalJson');
-    const popEvalPerceptionChecklist = document.getElementById('popEvalPerceptionChecklist');
-    const popEvalPerceptionClarity = document.getElementById('popEvalPerceptionClarity');
-    const popEvalDecisionChecklist = document.getElementById('popEvalDecisionChecklist');
-    const popEvalDecisionClarity = document.getElementById('popEvalDecisionClarity');
-    const btnCopyPerceptionCombined = document.getElementById('btnCopyPerceptionCombined');
-    const btnCopyDecisionCombined = document.getElementById('btnCopyDecisionCombined');
-    const sidebarExampleGrid = document.getElementById('sidebarExampleGrid');
+    const popSubmissionPanel = document.getElementById('popSubmissionPanel');
+    const popSubmissionPerception = document.getElementById('popSubmissionPerception');
+    const popSubmissionDecision = document.getElementById('popSubmissionDecision');
+    const btnCopyPopSubmissionPerception = document.getElementById('btnCopyPopSubmissionPerception');
+    const btnCopyPopSubmissionDecision = document.getElementById('btnCopyPopSubmissionDecision');
+    const popStatusMessage = document.getElementById('popStatusMessage');
+    const intentCard = document.getElementById('intentCard');
     const featuredExamplesRow = document.getElementById('featuredExamplesRow');
     const examplesCountBadge = document.getElementById('examplesCountBadge');
     const formHint = document.getElementById('formHint');
@@ -554,6 +507,7 @@
     const resultPanel = document.getElementById('resultPanel');
     const resultBody = document.getElementById('resultBody');
     const resultPanelClose = document.getElementById('resultPanelClose');
+    const sidebarExampleGrid = document.getElementById('sidebarExampleGrid');
 
     if (
         !logsDiv ||
@@ -565,12 +519,10 @@
         !streamLabel ||
         !tabOverviewBtn ||
         !tabExamplesBtn ||
-        !tabStoresBtn ||
         !tabTestCasesBtn ||
         !tabPopBtn ||
         !panelOverview ||
         !panelExamples ||
-        !panelStores ||
         !panelTestCases ||
         !panelPop ||
         !sidebarExampleGrid ||
@@ -607,29 +559,83 @@
         btn.classList.toggle('text-slate-500', !on);
     }
 
-    const TAB_ORDER = ['overview', 'examples', 'stores', 'testcases', 'pop'];
+    const TAB_ORDER = ['overview', 'examples', 'testcases', 'pop'];
     const tabButtons = {
         overview: tabOverviewBtn,
         examples: tabExamplesBtn,
-        stores: tabStoresBtn,
         testcases: tabTestCasesBtn,
         pop: tabPopBtn,
     };
     const panels = {
         overview: panelOverview,
         examples: panelExamples,
-        stores: panelStores,
         testcases: panelTestCases,
         pop: panelPop,
     };
 
+    let activeTabName = 'overview';
+    let pendingResultMarkdown = null;
+
+    function setPopStatus(msg, kind) {
+        if (!popStatusMessage) return;
+        if (!msg) {
+            popStatusMessage.classList.add('hidden');
+            popStatusMessage.textContent = '';
+            popStatusMessage.classList.remove('text-rose-700', 'text-emerald-700', 'text-slate-600');
+            return;
+        }
+        popStatusMessage.textContent = msg;
+        popStatusMessage.classList.remove('hidden', 'text-rose-700', 'text-emerald-700', 'text-slate-600');
+        if (kind === 'error') {
+            popStatusMessage.classList.add('text-rose-700');
+        } else if (kind === 'success') {
+            popStatusMessage.classList.add('text-emerald-700');
+        } else {
+            popStatusMessage.classList.add('text-slate-600');
+        }
+    }
+
     function activateTab(name) {
+        activeTabName = name;
         TAB_ORDER.forEach(function (id) {
             const selected = id === name;
             panels[id].classList.toggle('hidden', !selected);
             tabButtons[id].setAttribute('aria-selected', selected ? 'true' : 'false');
             styleTabSelected(tabButtons[id], selected);
         });
+        const popMode = name === 'pop';
+        if (panelPop) {
+            panelPop.setAttribute('aria-hidden', popMode ? 'false' : 'true');
+        }
+        if (sidebarAside) {
+            sidebarAside.classList.toggle('hidden', popMode);
+        }
+        if (popSubmissionPanel) {
+            popSubmissionPanel.classList.toggle('hidden', !popMode);
+        }
+        if (intentCard) {
+            intentCard.classList.toggle('hidden', popMode);
+        }
+        if (consoleCard) {
+            consoleCard.classList.toggle('hidden', popMode);
+        }
+        if (popMode) {
+            if (resultPanel) {
+                resultPanel.classList.add('hidden');
+            }
+        } else if (pendingResultMarkdown) {
+            paintResultPanel(pendingResultMarkdown);
+            pendingResultMarkdown = null;
+        } else if (resultPanel && resultBody && resultBody.innerHTML.trim()) {
+            resultPanel.classList.remove('hidden');
+        }
+        if (popMode && popSubmissionPanel) {
+            try {
+                popSubmissionPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            } catch (err) {
+                /* ignore */
+            }
+        }
     }
 
     function tabIndex(id) {
@@ -650,15 +656,18 @@
     tabExamplesBtn.addEventListener('click', function () {
         activateTab('examples');
     });
-    tabStoresBtn.addEventListener('click', function () {
-        activateTab('stores');
-    });
     tabTestCasesBtn.addEventListener('click', function () {
         activateTab('testcases');
     });
     tabPopBtn.addEventListener('click', function () {
         activateTab('pop');
     });
+
+    if (btnPopBack) {
+        btnPopBack.addEventListener('click', function () {
+            activateTab('overview');
+        });
+    }
 
     tabOverviewBtn.addEventListener('keydown', function (e) {
         if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
@@ -673,15 +682,6 @@
         } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
             e.preventDefault();
             focusTabByDelta('examples', -1);
-        }
-    });
-    tabStoresBtn.addEventListener('keydown', function (e) {
-        if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
-            e.preventDefault();
-            focusTabByDelta('stores', -1);
-        } else if (e.key === 'ArrowDown' || e.key === 'ArrowRight') {
-            e.preventDefault();
-            focusTabByDelta('stores', 1);
         }
     });
     tabTestCasesBtn.addEventListener('keydown', function (e) {
@@ -846,6 +846,20 @@
             .replace(/\x1b\][\s\S]*?\x1b\\/g, '');
     }
 
+    function plainLogMessage(payload) {
+        const plain = stripAnsi(payload);
+        const match = plain.match(/^[^|\n]+\|\s+[A-Z]+\s+\|\s+([\s\S]*)$/);
+        let msg = match ? match[1] : plain;
+        msg = msg.replace(/^[\w.<>:]+:\w+:\d+\s+-\s+/, '');
+        return msg;
+    }
+
+    function shouldShowInConsole(msg) {
+        if (!msg || !msg.trim()) return false;
+        if (msg.includes('[UI_RESULT_JSON]')) return false;
+        return true;
+    }
+
     function escapeHtmlPlain(s) {
         const d = document.createElement('div');
         d.textContent = s;
@@ -854,17 +868,18 @@
 
     function hideResultPanel() {
         if (!resultPanel || !resultBody) return;
+        pendingResultMarkdown = null;
         resultPanel.classList.add('hidden');
         resultBody.innerHTML = '';
     }
 
-    function showResultMarkdown(markdownText) {
+    function paintResultPanel(markdownText) {
         if (!resultPanel || !resultBody) return;
         let html = '';
         const md = markdownText || '';
         if (typeof marked !== 'undefined' && typeof marked.parse === 'function') {
             try {
-                html = marked.parse(md, { async: false, breaks: true });
+                html = marked.parse(md, { breaks: true });
             } catch (err) {
                 console.warn('[concierge-ui] marked.parse failed', err);
                 html = '<pre class="whitespace-pre-wrap font-sans text-sm text-slate-800">' + escapeHtmlPlain(md) + '</pre>';
@@ -884,6 +899,15 @@
         }
     }
 
+    function showResultMarkdown(markdownText) {
+        if (!markdownText) return;
+        if (activeTabName === 'pop') {
+            pendingResultMarkdown = markdownText;
+            return;
+        }
+        paintResultPanel(markdownText);
+    }
+
     /**
      * Extract UI_RESULT_JSON from one SSE record. Log lines are prefixed with
      * ``time | LEVEL | message``, so we search for the marker (see stripAnsi).
@@ -900,13 +924,23 @@
             const data = JSON.parse(rest);
             if (data && typeof data.text === 'string') {
                 showResultMarkdown(data.text);
-                resetRunButton();
                 return true;
             }
         } catch (err) {
             console.warn('[concierge-ui] Bad UI_RESULT_JSON', err);
         }
         return false;
+    }
+
+    function consumeFinalAnswerPayload(payload) {
+        const msg = plainLogMessage(payload);
+        const marker = '>>> FINAL ANSWER <<<';
+        const idx = msg.indexOf(marker);
+        if (idx < 0) return false;
+        const rest = msg.slice(idx + marker.length).trim();
+        if (!rest) return false;
+        showResultMarkdown(rest);
+        return true;
     }
 
     function clearPlaceholderIfNeeded() {
@@ -918,12 +952,27 @@
         if (!rawText) return;
         clearPlaceholderIfNeeded();
 
+        const msg = plainLogMessage(rawText);
+        if (!shouldShowInConsole(msg)) return;
+
         const line = document.createElement('div');
         line.className = 'log-line';
-        if (ansiUp) {
+        if (msg.includes('─── iter')) {
+            line.classList.add('log-iter');
+        } else if (
+            /\[memory\.|\[perception\]|\[decision\]|\[action\]|\[attach\]|\[done\]|^\s+\[(?:open|done)\]|^\s+attach=/.test(msg)
+        ) {
+            line.classList.add('log-role');
+        }
+        if (ansiUp && /\x1b\[[\d;]*m/.test(rawText)) {
             line.innerHTML = ansiUp.ansi_to_html(rawText);
         } else {
-            line.textContent = rawText;
+            line.textContent = msg;
+        }
+        const plain = stripAnsi(rawText);
+        const levelMatch = plain.match(/\|\s+(DEBUG|INFO|SUCCESS|WARNING|ERROR)\s+\|/);
+        if (levelMatch) {
+            line.dataset.level = levelMatch[1].toLowerCase();
         }
         logsDiv.appendChild(line);
         logsDiv.scrollTop = logsDiv.scrollHeight;
@@ -942,7 +991,9 @@
             text.includes('[agent] RUN_COMPLETE') ||
             text.includes('reason=global_timeout') ||
             text.includes('reason=run_failed') ||
+            text.includes('reason=error_abort') ||
             text.includes('[agent] Run failed') ||
+            text.includes('[done] all') ||
             text.includes('All goals done. Concluding') ||
             text.includes('Reached max iterations without completion') ||
             text.includes('>>> FINAL ANSWER <<<')
@@ -970,7 +1021,9 @@
         evtSource.onmessage = function (event) {
             const payload = event.data || '';
             if (!payload) return;
-            if (consumeUiResultPayload(payload)) return;
+            if (!consumeUiResultPayload(payload)) {
+                consumeFinalAnswerPayload(payload);
+            }
             appendLog(payload);
             maybeComplete(payload);
         };
@@ -1001,13 +1054,17 @@
     });
 
     async function startAgentRun() {
+        if (runBtn.disabled) {
+            setFormHint('Agent is already running — wait for the current run to finish.');
+            return;
+        }
         const query = queryInput.value.trim();
         if (!query) {
-            setFormHint('Add an intent, pick a quick example, or open Examples / Stores in the sidebar.');
+            setFormHint('Add an intent, pick a quick example, or open Examples / Test Cases in the sidebar.');
             queryInput.focus();
             return;
         }
-        setFormHint('Running… Formatted answer appears in Agent result when ready; trace streams below.');
+        setFormHint('Running… Your answer will appear above when ready; details stream in the console.');
         hideResultPanel();
 
         runBtn.disabled = true;
@@ -1054,12 +1111,11 @@
         btn.addEventListener('click', function () {
             const query = btn.getAttribute('data-query');
             if (query) {
+                activateTab('overview');
                 queryInput.value = query;
                 setFormHint('');
                 queryInput.focus();
-                // Scroll main area to view
                 queryInput.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-                // Automatically run
                 startAgentRun();
             }
         });
@@ -1068,21 +1124,26 @@
     const resetStateBtn = document.getElementById('resetStateBtn');
     if (resetStateBtn) {
         resetStateBtn.addEventListener('click', async function () {
+            if (!window.confirm('Clear all durable state in state/? This cannot be undone.')) {
+                return;
+            }
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            appendLog('\x1b[33m' + now + ' | WARN     | [UI] Clearing state directory (state/)... \x1b[0m');
+            appendLog(now + ' | WARNING  | [UI] Clearing state directory (state/)...');
             
             try {
                 const res = await fetch('/reset-state', { method: 'POST' });
-                const body = await res.json();
+                let body = {};
+                try {
+                    body = await res.json();
+                } catch (parseErr) { /* ignore */ }
                 if (res.ok) {
-                    appendLog('\x1b[32m' + now + ' | SUCCESS  | [UI] ' + (body.detail || 'Durable state cleared successfully!') + '\x1b[0m');
-                    // Force clean up log or result view
+                    appendLog(now + ' | SUCCESS  | [UI] ' + (body.detail || 'Durable state cleared successfully!'));
                     hideResultPanel();
                 } else {
-                    appendLog('\x1b[31m' + now + ' | ERROR    | [UI] Reset failed: ' + (body.detail || 'Unknown error') + '\x1b[0m');
+                    appendLog(now + ' | ERROR    | [UI] Reset failed: ' + (body.detail || ('HTTP ' + res.status)));
                 }
             } catch (err) {
-                appendLog('\x1b[31m' + now + ' | ERROR    | [UI] Network error during reset: ' + err.message + '\x1b[0m');
+                appendLog(now + ' | ERROR    | [UI] Network error during reset: ' + err.message);
             }
         });
     }
@@ -1107,6 +1168,7 @@
 
     function normalizePopEval(evalData) {
         if (!evalData || typeof evalData !== 'object') return null;
+        if (evalData.error) return { error: String(evalData.error) };
         const out = {};
         POP_EVAL_KEYS.forEach(function (key) {
             if (Object.prototype.hasOwnProperty.call(evalData, key)) {
@@ -1116,49 +1178,99 @@
         return Object.keys(out).length ? out : null;
     }
 
-    function renderChecklist(checklistDiv, evalData) {
-        checklistDiv.innerHTML = '';
-        if (!evalData) {
-            checklistDiv.innerHTML = '<p class="text-[10px] text-slate-400">No evaluation loaded yet.</p>';
-            return;
+    function coercePopEval(raw) {
+        if (!raw || typeof raw !== 'object') return null;
+        if (raw.error) return raw;
+        const hasCriteria = POP_EVAL_KEYS.some(function (key) {
+            return key !== 'overall_clarity' && Object.prototype.hasOwnProperty.call(raw, key);
+        });
+        const hasClarity =
+            Object.prototype.hasOwnProperty.call(raw, 'overall_clarity') &&
+            String(raw.overall_clarity || '').trim();
+        return hasCriteria || hasClarity ? raw : null;
+    }
+
+    function formatPopEvalJson(evalData) {
+        const normalized = normalizePopEval(evalData);
+        const out = {};
+        POP_EVAL_KEYS.forEach(function (key) {
+            if (key === 'overall_clarity') {
+                if (normalized && !normalized.error && normalized.overall_clarity) {
+                    out[key] = String(normalized.overall_clarity);
+                } else if (normalized && normalized.error) {
+                    out[key] = 'Evaluation failed: ' + normalized.error;
+                } else {
+                    out[key] = 'Run Re-Evaluate Prompts to generate this review.';
+                }
+                return;
+            }
+            out[key] = !!(normalized && !normalized.error && normalized[key] === true);
+        });
+        return JSON.stringify(out, null, 2);
+    }
+
+    function buildPopSubmissionText(prompt, evalData) {
+        const body = (prompt || '').trim();
+        const jsonBlock = formatPopEvalJson(evalData);
+        if (!body) {
+            return jsonBlock;
         }
-        const criteria = [
-            { key: 'explicit_reasoning', label: 'Explicit Reasoning' },
-            { key: 'structured_output', label: 'Structured Output' },
-            { key: 'tool_separation', label: 'Tool Separation' },
-            { key: 'conversation_loop', label: 'Conversation Loop' },
-            { key: 'instructional_framing', label: 'Instructional Framing' },
-            { key: 'internal_self_checks', label: 'Internal Self-Checks' },
-            { key: 'reasoning_type_awareness', label: 'Reasoning Type Awareness' },
-            { key: 'fallbacks', label: 'Error Handling or Fallbacks' }
-        ];
-        criteria.forEach(c => {
-            const val = evalData[c.key];
-            const item = document.createElement('div');
-            item.className = 'flex items-center gap-1.5 font-medium text-[11px]';
-            const icon = val 
-                ? `<span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-emerald-100 text-[10px] font-bold text-emerald-700">✓</span>`
-                : `<span class="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-rose-100 text-[10px] font-bold text-rose-700">✗</span>`;
-            item.innerHTML = `${icon}<span class="${val ? 'text-slate-800' : 'text-slate-400 line-through'}">${c.label}</span>`;
-            checklistDiv.appendChild(item);
+        return body + '\n\n' + jsonBlock;
+    }
+
+    function renderPopSubmissionFields() {
+        if (popSubmissionPerception) {
+            popSubmissionPerception.value = buildPopSubmissionText(
+                lastPerceptionPrompt,
+                lastPerceptionEval
+            );
+        }
+        if (popSubmissionDecision) {
+            popSubmissionDecision.value = buildPopSubmissionText(
+                lastDecisionPrompt,
+                lastDecisionEval
+            );
+        }
+    }
+
+    function copyPopSubmission(textarea, btn, defaultLabel) {
+        if (!textarea || !btn) return;
+        const text = textarea.value || '';
+        navigator.clipboard.writeText(text).then(function () {
+            btn.textContent = 'Copied!';
+            setTimeout(function () {
+                btn.textContent = defaultLabel;
+            }, 1500);
+        }).catch(function () {
+            btn.textContent = 'Copy failed';
+            setTimeout(function () {
+                btn.textContent = defaultLabel;
+            }, 1500);
         });
     }
 
     function renderPopUI() {
-        txtPerceptionPrompt.textContent = lastPerceptionPrompt || 'No perception prompt extracted.';
-        txtDecisionPrompt.textContent = lastDecisionPrompt || 'No decision prompt extracted.';
+        renderPopSubmissionFields();
+    }
 
-        const perceptionEval = normalizePopEval(lastPerceptionEval);
-        const decisionEval = normalizePopEval(lastDecisionEval);
-
-        txtPerceptionEvalJson.textContent = perceptionEval ? JSON.stringify(perceptionEval, null, 2) : '{}';
-        txtDecisionEvalJson.textContent = decisionEval ? JSON.stringify(decisionEval, null, 2) : '{}';
-
-        popEvalPerceptionClarity.textContent = perceptionEval && perceptionEval.overall_clarity ? `"${perceptionEval.overall_clarity}"` : 'No evaluation text available.';
-        popEvalDecisionClarity.textContent = decisionEval && decisionEval.overall_clarity ? `"${decisionEval.overall_clarity}"` : 'No evaluation text available.';
-
-        renderChecklist(popEvalPerceptionChecklist, perceptionEval);
-        renderChecklist(popEvalDecisionChecklist, decisionEval);
+    function applyPopValidationResponse(data) {
+        if (!data || typeof data !== 'object') return;
+        const evals = data.evaluations || {};
+        lastPerceptionPrompt = data.perception_prompt || lastPerceptionPrompt || '';
+        lastDecisionPrompt = data.decision_prompt || lastDecisionPrompt || '';
+        lastPerceptionEval = coercePopEval(
+            data.perception_eval ||
+            evals.Perception ||
+            evals.perception ||
+            null
+        );
+        lastDecisionEval = coercePopEval(
+            data.decision_eval ||
+            evals.Decision ||
+            evals.decision ||
+            null
+        );
+        renderPopUI();
     }
 
     async function loadPromptsAndEvals() {
@@ -1166,11 +1278,7 @@
             const res = await fetch('/get-prompts-and-evals');
             if (res.ok) {
                 const data = await res.json();
-                lastPerceptionPrompt = data.perception_prompt || '';
-                lastPerceptionEval = data.perception_eval || null;
-                lastDecisionPrompt = data.decision_prompt || '';
-                lastDecisionEval = data.decision_eval || null;
-                renderPopUI();
+                applyPopValidationResponse(data);
             }
         } catch (err) {
             console.error('[UI-PoP] Failed to load prompts & evaluations:', err);
@@ -1178,31 +1286,40 @@
     }
 
     // Bind triggers
-    if (btnRunPopValidation) {
+    if (btnRunPopValidation && popValidationSpinner && popValidationLabel) {
         btnRunPopValidation.addEventListener('click', async function () {
             btnRunPopValidation.disabled = true;
             popValidationSpinner.classList.remove('hidden');
-            popValidationLabel.textContent = 'Evaluating Concurrently...';
+            popValidationLabel.textContent = 'Evaluating…';
+            setPopStatus('Running PoP validation — this may take a moment.', 'info');
 
             const now = new Date().toISOString().replace('T', ' ').substring(0, 19);
-            appendLog('\x1b[35m' + now + ' | INFO     | [UI] Running parallel PoP validation... \x1b[0m');
+            appendLog(now + ' | INFO     | [UI] Running parallel PoP validation...');
 
             try {
                 const res = await fetch('/run-pop-validation', { method: 'POST' });
-                const data = await res.json();
+                let data = {};
+                try {
+                    data = await res.json();
+                } catch (parseErr) {
+                    data = {};
+                }
                 if (res.ok) {
-                    lastPerceptionPrompt = data.perception_prompt || '';
-                    lastDecisionPrompt = data.decision_prompt || '';
-                    lastPerceptionEval = data.evaluations.Perception || null;
-                    lastDecisionEval = data.evaluations.Decision || null;
-
-                    renderPopUI();
-                    appendLog('\x1b[32m' + now + ' | SUCCESS  | [UI] Prompt evaluations updated successfully! \x1b[0m');
+                    applyPopValidationResponse(data);
+                    setPopStatus('Prompt evaluations updated. Copy the answers below for submission.', 'success');
+                    appendLog(now + ' | SUCCESS  | [UI] Prompt evaluations updated successfully!');
+                    activateTab('pop');
+                    if (popSubmissionPanel) {
+                        popSubmissionPanel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
                 } else {
-                    appendLog('\x1b[31m' + now + ' | ERROR    | [UI] PoP validation failed: ' + (data.detail || 'Unknown error') + '\x1b[0m');
+                    const detail = data.detail || data.status || 'Unknown error';
+                    setPopStatus('PoP validation failed: ' + detail, 'error');
+                    appendLog(now + ' | ERROR    | [UI] PoP validation failed: ' + detail);
                 }
             } catch (err) {
-                appendLog('\x1b[31m' + now + ' | ERROR    | [UI] Network error during PoP validation: ' + err.message + '\x1b[0m');
+                setPopStatus('Network error during PoP validation: ' + err.message, 'error');
+                appendLog(now + ' | ERROR    | [UI] Network error during PoP validation: ' + err.message);
             } finally {
                 btnRunPopValidation.disabled = false;
                 popValidationSpinner.classList.add('hidden');
@@ -1211,24 +1328,19 @@
         });
     }
 
-    if (btnCopyPerceptionCombined) {
-        btnCopyPerceptionCombined.addEventListener('click', function () {
-            const combined = `=== Perception Prompt ===\n${lastPerceptionPrompt}\n\n=== PoP Validation JSON ===\n${JSON.stringify(normalizePopEval(lastPerceptionEval) || {}, null, 2)}`;
-            navigator.clipboard.writeText(combined);
-            btnCopyPerceptionCombined.textContent = 'Copied!';
-            setTimeout(() => { btnCopyPerceptionCombined.textContent = '📋 Copy submission'; }, 1500);
+    if (btnCopyPopSubmissionPerception) {
+        btnCopyPopSubmissionPerception.addEventListener('click', function () {
+            copyPopSubmission(popSubmissionPerception, btnCopyPopSubmissionPerception, 'Copy perception answer');
         });
     }
 
-    if (btnCopyDecisionCombined) {
-        btnCopyDecisionCombined.addEventListener('click', function () {
-            const combined = `=== Decision Prompt ===\n${lastDecisionPrompt}\n\n=== PoP Validation JSON ===\n${JSON.stringify(normalizePopEval(lastDecisionEval) || {}, null, 2)}`;
-            navigator.clipboard.writeText(combined);
-            btnCopyDecisionCombined.textContent = 'Copied!';
-            setTimeout(() => { btnCopyDecisionCombined.textContent = '📋 Copy submission'; }, 1500);
+    if (btnCopyPopSubmissionDecision) {
+        btnCopyPopSubmissionDecision.addEventListener('click', function () {
+            copyPopSubmission(popSubmissionDecision, btnCopyPopSubmissionDecision, 'Copy decision answer');
         });
     }
 
+    activateTab('overview');
     // Trigger load on start
     loadPromptsAndEvals();
 })();

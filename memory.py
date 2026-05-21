@@ -217,9 +217,10 @@ class MemoryService:
         )
         self._items.append(item)
         self._save_disk()
-        logger.info(
-            f"[memory.remember] kind={item.kind} keywords={item.keywords[:8]} descriptor={item.descriptor[:120]!r}"
-        )
+        snippet = text if len(text) <= 80 else text[:77] + "..."
+        kw_json = json.dumps(item.keywords[:8], ensure_ascii=False)
+        logger.info(f'[memory.remember]  classified {snippet!r} as {item.kind}')
+        logger.info(f'{" " * 19}keywords: {kw_json}')
 
     def _classify_with_llm(self, text: str) -> MemoryClassifyLLM:
         client = shared_gemini_client()

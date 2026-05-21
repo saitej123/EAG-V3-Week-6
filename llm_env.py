@@ -99,6 +99,46 @@ def agent_max_iterations() -> int:
     return max(1, min(50, _int_env("AGENT_MAX_ITERATIONS", 3)))
 
 
+def agent_iteration_ceiling() -> int:
+    """Upper bound when auto-extending for multi-step queries (default 8). Override with AGENT_ITERATION_CEILING."""
+    base = agent_max_iterations()
+    return max(base, min(50, _int_env("AGENT_ITERATION_CEILING", 8)))
+
+
+def estimate_iteration_need(user_query: str) -> int:
+    """Heuristic step count from query shape (search+fetch chains, URL extract, reminders, etc.)."""
+    t = (user_query or "").lower().strip()
+    need = agent_max_iterations()
+    if not t:
+        return need
+
+    if any(k in t for k in ("top 3", "top three", "3 results", "three results")):
+        need = max(need, 6)
+    if "search for" in t and any(k in t for k in ("list", "advice", "summar", "agree", "read the", "read top")):
+        need = max(need, 6)
+
+    if "http://" in t or "https://" in t or "wikipedia" in t:
+        need = max(need, 4)
+
+    if "remember" in t and any(k in t for k in ("reminder", "calendar", "birthday")):
+        need = max(need, 5)
+
+    if any(k in t for k in ("weather", "forecast", "weekend", "activities", "family-friendly")):
+        need = max(need, 4)
+
+    return need
+
+
+def resolve_iteration_budget(user_query: str, explicit: int | None = None) -> int:
+    """Default 3; extend up to ceiling (8) when the query clearly needs more tool steps."""
+    if explicit is not None:
+        return max(1, min(50, explicit))
+    base = agent_max_iterations()
+    ceiling = agent_iteration_ceiling()
+    need = estimate_iteration_need(user_query)
+    return min(ceiling, max(base, need))
+
+
 def agent_run_max_seconds() -> float:
     """Hard cap for one agent job (wall clock). Prevents Run agent staying busy forever."""
     return max(120.0, _float_env("AGENT_RUN_MAX_SECONDS", 900.0))

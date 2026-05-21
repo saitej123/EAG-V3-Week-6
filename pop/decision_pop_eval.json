@@ -7,5 +7,5 @@
   "internal_self_checks": true,
   "reasoning_type_awareness": true,
   "fallbacks": true,
-  "overall_clarity": "An exceptionally robust and well-structured prompt that satisfies all criteria. It clearly separates reasoning from tool execution, enforces a strict JSON schema with examples, supports multi-turn loops with history, mandates self-checks, tags reasoning types, and defines clear fallback behaviors under budget constraints."
+  "overall_clarity": "An exceptionally robust, well-structured prompt that comprehensively addresses all criteria with clear examples, state management, and strict formatting rules."
 }

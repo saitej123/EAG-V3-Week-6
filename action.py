@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import platform
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -131,33 +132,61 @@ def _log_usage_snapshot(prefix: str = "[Tavily/DDG usage]") -> None:
         logger.warning(f"{prefix} could not read usage.json: {e}")
 
 
+def _format_size_label(nbytes: int) -> str:
+    if nbytes >= 1024:
+        return f"{max(1, round(nbytes / 1024))}KB"
+    return f"{nbytes}B"
+
+
+def format_artifact_size(nbytes: int) -> str:
+    """Large Wikipedia-style blobs use raw bytes; smaller web artifacts use KB (Query D)."""
+    if nbytes >= 100_000:
+        return f"{nbytes} bytes"
+    return _format_size_label(nbytes)
+
+
+def _text_preview(text: str, *, max_len: int = 80) -> str:
+    snippet = " ".join((text or "").replace("\n", " ").split())
+    if len(snippet) > max_len:
+        return snippet[: max_len - 3] + "..."
+    return snippet
+
+
 def summarize_tool_result(
     tool_name: str,
     arguments: dict[str, Any],
     text: str,
     artifact_id: str | None,
+    *,
+    artifact_bytes: int = 0,
 ) -> str:
     """One-line action summary for iteration logs."""
     tn = (tool_name or "").strip()
     body = (text or "").strip()
+    nbytes = artifact_bytes or len(body.encode("utf-8"))
 
     if tn == "web_search":
         n = 0
         try:
-            parsed = json.loads(body)
+            parsed = json.loads(body) if body.startswith("[") or body.startswith("{") else None
             if isinstance(parsed, dict):
                 parsed = [parsed]
             if isinstance(parsed, list):
                 n = sum(1 for x in parsed if isinstance(x, dict) and x.get("url"))
         except json.JSONDecodeError:
             pass
+        if n == 0 and artifact_id:
+            return f"[search stored as {artifact_id}, {_format_size_label(nbytes)}]"
         if n == 0:
             return "search failed (no results)"
-        if artifact_id:
-            return f"[{n} results returned, stored as artifact]"
-        return f"[{n} results returned, descriptors recorded]"
+        return f"[{n} URLs in descriptors]"
 
     if tn == "fetch_urls":
+        if body.startswith("[artifact "):
+            return body[:220] + ("..." if len(body) > 220 else "")
+        if artifact_id:
+            preview = _text_preview(body)
+            return f"[artifact {artifact_id}, {format_artifact_size(nbytes)}] preview: {preview!r}"
         n = 0
         try:
             parsed = json.loads(body)
@@ -170,6 +199,21 @@ def summarize_tool_result(
         return body[:100] if body else "fetch completed"
 
     if tn == "fetch_url":
+        if body.startswith("[artifact "):
+            if artifact_id and nbytes:
+                m = re.search(r"preview:\s*(.+?)(?:\.\.\.)?$", body)
+                prev = m.group(1).strip() if m else _text_preview(body, max_len=55)
+                return f"[artifact {artifact_id}, {format_artifact_size(nbytes)}] preview: {prev}..."
+            return body[:200] + ("..." if len(body) > 200 else "")
+        if artifact_id:
+            preview = _text_preview(body, max_len=60)
+            try:
+                parsed = json.loads(body)
+                if isinstance(parsed, dict):
+                    preview = _text_preview(str(parsed.get("text") or body), max_len=60)
+            except json.JSONDecodeError:
+                pass
+            return f"[artifact {artifact_id}, {format_artifact_size(nbytes)}] preview: {preview!r}..."
         snippet = body
         try:
             parsed = json.loads(body)
@@ -180,9 +224,56 @@ def summarize_tool_result(
         snippet = " ".join(snippet.split())
         if len(snippet) > 100:
             snippet = snippet[:97] + "..."
-        if artifact_id and not snippet:
-            return "page fetched, stored as artifact"
         return snippet or "page fetched"
+
+    if tn == "create_file":
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and parsed.get("ok"):
+                return "ok"
+        except json.JSONDecodeError:
+            pass
+        return "ok" if '"ok": true' in body.lower() or body.lower().startswith("ok") else body[:80]
+
+    if tn == "update_file" or tn == "edit_file":
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict) and parsed.get("ok"):
+                return "ok"
+        except json.JSONDecodeError:
+            pass
+        return "ok" if '"ok": true' in body.lower() else body[:80]
+
+    if tn == "list_dir":
+        try:
+            parsed = json.loads(body) if body.lstrip().startswith("[") else None
+            if isinstance(parsed, list) and parsed:
+                names: list[str] = []
+                for entry in parsed:
+                    if not isinstance(entry, dict):
+                        continue
+                    name = str(entry.get("name") or entry.get("path") or "").strip()
+                    if name:
+                        names.append(name.rsplit("/", 1)[-1])
+                if len(names) == 1:
+                    return f"[file: {names[0]}]"
+                if names:
+                    return f"[{len(names)} files: {', '.join(names[:3])}]"
+        except json.JSONDecodeError:
+            pass
+        preview = " ".join(body.split())
+        return preview[:100] + ("..." if len(preview) > 100 else "") if preview else "directory listed"
+
+    if tn == "read_file":
+        try:
+            parsed = json.loads(body)
+            if isinstance(parsed, dict):
+                path = str(parsed.get("path") or arguments.get("path") or "")
+                fname = path.rsplit("/", 1)[-1] if path else ""
+                if fname:
+                    return f"[file: {fname}]"
+        except json.JSONDecodeError:
+            pass
 
     if tn == "gemini_live_search":
         if artifact_id:
@@ -359,8 +450,16 @@ class ActionActuator:
 
     def _pack_descriptor(self, text: str, artifact_id: str | None) -> str:
         if artifact_id:
-            prev = text[:400].replace("\n", " ")
-            return f"[artifact {artifact_id}, {len(text.encode('utf-8'))} bytes] preview: {prev!r}"
+            nbytes = len(text.encode("utf-8"))
+            preview_src = text
+            try:
+                parsed = json.loads(text)
+                if isinstance(parsed, dict):
+                    preview_src = str(parsed.get("text") or text)
+            except json.JSONDecodeError:
+                pass
+            prev = _text_preview(preview_src, max_len=55)
+            return f"[artifact {artifact_id}, {format_artifact_size(nbytes)}] preview: {prev!r}..."
         return text
 
     async def execute(

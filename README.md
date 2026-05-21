@@ -320,6 +320,16 @@ Cleans workspace, runs Queries A–D in one process (warm MCP), writes per-query
 
 ---
 
+## Project walkthrough (YouTube)
+
+Watch a demo of this Cognitive Agent — the four-role loop, Web UI, live console, and assignment test cases:
+
+[![Cognitive Agent project walkthrough](https://img.youtube.com/vi/7NruHRzSxQM/0.jpg)](https://www.youtube.com/watch?v=7NruHRzSxQM)
+
+**[Watch on YouTube →](https://www.youtube.com/watch?v=7NruHRzSxQM)**
+
+---
+
 ## Search & fetch providers (`search_providers.py`)
 
 Single source of truth for external data. Used by **`mcp_server.py`**, **`action.py`** (direct fallback), and **`agent6.py`** (emergency rescue).
